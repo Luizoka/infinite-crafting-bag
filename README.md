@@ -7,7 +7,7 @@ Mod for The Binding of Isaac: Repentance+ with REPENTOGON. The Bag of Crafting s
 - **I** opens or closes the catalog. While editing the search, press Enter or Escape to finish editing first.
 - **Enter** edits the name search; type letters, numbers or spaces and use Backspace to delete. Enter confirms the search and Escape cancels the edit.
 - **Up/Down** selects an item or scrolls the ingredient inventory; holding an arrow repeats after a short delay. **Page Up/Page Down** move through the item list.
-- **F** cycles item availability filters (all, unlocked, locked). **Q** cycles quality filters (all, 0–4).
+- **R** cycles item availability filters (all, unlocked, locked). **Q** cycles quality filters (all, 0–4).
 - **Tab** switches between the item list and ingredient inventory. **P** selects the next player.
 
 The catalog considers only items discovered from the selected player's current stock. Availability refers to `ItemConfig:IsAvailable()`; the locked filter is not a complete list of all locked collectibles. Search uses the localized item name when available and supports ASCII case-insensitive typing.

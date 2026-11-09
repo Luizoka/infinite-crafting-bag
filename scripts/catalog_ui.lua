@@ -47,7 +47,7 @@ function UI:Init(mod, storage)
     end, describe)
     self.icons, self.iconCount = {}, 0
     local keys = {Keyboard.KEY_I, Keyboard.KEY_ENTER, Keyboard.KEY_ESCAPE, Keyboard.KEY_TAB,
-        Keyboard.KEY_P, Keyboard.KEY_F, Keyboard.KEY_Q, Keyboard.KEY_UP, Keyboard.KEY_DOWN,
+        Keyboard.KEY_P, Keyboard.KEY_R, Keyboard.KEY_Q, Keyboard.KEY_UP, Keyboard.KEY_DOWN,
         Keyboard.KEY_PAGE_UP, Keyboard.KEY_PAGE_DOWN, Keyboard.KEY_BACKSPACE, Keyboard.KEY_SPACE}
     for code = string.byte("A"), string.byte("Z") do keys[#keys + 1] = code end
     for code = string.byte("0"), string.byte("9") do keys[#keys + 1] = code end
@@ -182,7 +182,7 @@ function UI:HandleInput()
     elseif self.focus == "results" and event[Keyboard.KEY_ENTER] then
         self.searchBefore = self.query
         self:SetFocus("search")
-    elseif self.focus == "results" and event[Keyboard.KEY_F] then
+    elseif self.focus == "results" and event[Keyboard.KEY_R] then
         self.availability = self.availability == "all" and "available" or self.availability == "available" and "locked" or "all"
         self:ResetListSelection()
     elseif self.focus == "results" and event[Keyboard.KEY_Q] then
@@ -287,7 +287,7 @@ function UI:Render()
     local list = self:FilteredList()
     local av = self.availability == "all" and "todos" or self.availability == "available" and "liberados" or "bloqueados"
     draw("Busca: " .. self.query .. (self.editing and "_" or ""), 12, 55, 0.78, gold)
-    draw("F: " .. av .. "  Q: " .. (self.quality < 0 and "todas" or tostring(self.quality)), 12, 68, 0.75, white)
+    draw("R: " .. av .. "  Q: " .. (self.quality < 0 and "todas" or tostring(self.quality)), 12, 68, 0.75, white)
     local status = c.state == "working" and "BUSCA EM ANDAMENTO" or c.state == "limited" and "LIMITE - BUSCA INCOMPLETA"
         or c.state == "error" and "ERRO - BUSCA INCOMPLETA" or "BUSCA COMPLETA"
     draw(status .. "  " .. (c.evaluated or 0) .. "/" .. (c.total or 0), 12, 81, 0.75, gold)

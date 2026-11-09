@@ -1,7 +1,7 @@
 function include(path) return dofile(path .. ".lua") end
 Keyboard = {KEY_I=73, KEY_ENTER=257, KEY_ESCAPE=256, KEY_BACKSPACE=259, KEY_SPACE=32,
-    KEY_TAB=258, KEY_P=80, KEY_F=70, KEY_Q=81, KEY_UP=265, KEY_DOWN=264, KEY_PAGE_UP=266, KEY_PAGE_DOWN=267}
-ButtonAction = { ACTION_LEFT=0, ACTION_DROP=11, ACTION_MAP=13, ACTION_RESTART=18 }
+    KEY_TAB=258, KEY_P=80, KEY_F=70, KEY_R=82, KEY_Q=81, KEY_UP=265, KEY_DOWN=264, KEY_PAGE_UP=266, KEY_PAGE_DOWN=267}
+ButtonAction = { ACTION_LEFT=0, ACTION_DROP=11, ACTION_MAP=13, ACTION_FULLSCREEN=16, ACTION_RESTART=18 }
 InputHook = { GET_ACTION_VALUE=2 }
 ModCallbacks = { MC_POST_UPDATE=1, MC_POST_HUD_RENDER=2, MC_POST_NEW_ROOM=3, MC_POST_ADD_COLLECTIBLE=4,
     MC_POST_ACHIEVEMENT_UNLOCK=5, MC_POST_GET_COLLECTIBLE=6, MC_POST_GAME_STARTED=7, MC_INPUT_ACTION=8,
@@ -54,11 +54,14 @@ tick(100); assert(ui.selected == 5)
 tick(2000); assert(ui.selected == 6, "stalled frame must not produce multiple steps")
 held[Keyboard.KEY_DOWN]=nil; tick()
 press(Keyboard.KEY_UP); assert(ui.selected == 5)
-press(Keyboard.KEY_F); assert(ui.availability == "available")
+press(Keyboard.KEY_F); assert(ui.availability == "all", "F must not change the availability filter")
+assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,player,0,ButtonAction.ACTION_FULLSCREEN) == nil)
+assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,nil,0,ButtonAction.ACTION_FULLSCREEN) == nil)
+press(Keyboard.KEY_R); assert(ui.availability == "available")
 press(Keyboard.KEY_Q); assert(ui.quality == 0)
 press(Keyboard.KEY_ENTER); assert(ui.focus == "search")
-press(Keyboard.KEY_F); press(Keyboard.KEY_Q)
-assert(ui.query == "fq" and ui.availability == "available" and ui.quality == 0)
+press(Keyboard.KEY_R); press(Keyboard.KEY_Q); press(Keyboard.KEY_F)
+assert(ui.query == "rqf" and ui.availability == "available" and ui.quality == 0)
 press(Keyboard.KEY_ESCAPE); assert(ui.focus == "results" and ui.query == "")
 press(Keyboard.KEY_ENTER); press(Keyboard.KEY_I); press(Keyboard.KEY_ENTER)
 assert(ui.focus == "results" and ui.query == "i", "Enter must confirm search and I must type in search")
