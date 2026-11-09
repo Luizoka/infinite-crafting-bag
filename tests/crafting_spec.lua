@@ -11,11 +11,13 @@ package.preload.json = function() return {
 local raw
 local mod={HasData=function() return raw ~= nil end, SaveData=function(_,s) raw=s end, LoadData=function() return raw end}
 local players={}
-local config={Type=1, IsAvailable=function() return true end}
+local config={Type=1, AchievementID=-1, IsAvailable=function() return true end}
 -- Isaac can return distinct Lua wrappers for the same underlying entity.
 function GetPtrHash(p) return p.identity or p end
 local function wrapper(p) return p and setmetatable({identity=p}, {__index=p}) end
+local unlocked = true
 Isaac={DebugString=function() end, GetPlayer=function(i) return wrapper(players[i+1]) end,
+    GetPersistentGameData=function() return {Unlocked=function() return unlocked end} end,
     GetItemConfig=function() return {GetCollectible=function() return config end} end}
 function Game() return {GetNumPlayers=function() return #players end, GetFrameCount=function() return 0 end,
     GetSeeds=function() return {GetStartSeed=function() return 42 end} end, IsPaused=function() return false end} end
@@ -42,6 +44,19 @@ local p, other=player(0), player(1); players={p,other}
 local recipe={1,1,1,1,2,2,2,2}
 local item={id=101,recipe=recipe}
 storage:Add(p,recipe); storage:Add(other,recipe)
+config.AchievementID=7; unlocked=false
+local valid, reason=crafting:Prepare(p,item)
+assert(not valid and reason=="Item nao desbloqueado")
+unlocked=true; config.IsAvailable=function() return false end
+assert(crafting:Prepare(p,item), 'run restriction must not prevent preparation')
+crafting:Tick(false,false,0); crafting:Tick(false,true,1); crafting:Tick(false,true,1201)
+assert(storage:Count(p)==8 and #p.given==0 and crafting.message=="Item indisponivel nesta partida")
+config.IsAvailable=function() return true end
+config.Type=ItemType.ITEM_ACTIVE; p.active=55
+assert(crafting:Prepare(p,item), 'occupied active slot must not prevent preparation')
+crafting:Tick(false,false,1300); crafting:Tick(false,true,1301); crafting:Tick(false,true,2501)
+assert(storage:Count(p)==8 and #p.given==0 and crafting.message=="Esvazie o espaco de item ativo")
+config.Type=1; p.active=0
 assert(crafting:Prepare(wrapper(p),item)); assert(storage:Count(p)==8 and #p.given==0)
 assert(crafting:ShouldBlock(wrapper(p),true))
 crafting:Tick(false,false,0); crafting:Tick(false,true,1); crafting:Tick(false,true,500)

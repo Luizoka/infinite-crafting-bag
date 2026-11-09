@@ -3,7 +3,7 @@ local function trace(message)
 	Isaac.DebugString(message)
 end
 
-trace("[ICB BUILD 2026-11-09-log-01] main.lua iniciado")
+trace("[ICB BUILD 2026-11-09-prepare-q-02] main.lua iniciado")
 
 local mod = RegisterMod("Infinite Crafting Bag", 1)
 

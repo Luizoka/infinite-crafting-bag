@@ -16,10 +16,11 @@ end
 
 function Crafting:Prepare(player, item)
     local valid, reason = self:Validate(player, item, self.storage:GetRevision(player))
-    if not valid then return false, reason end
+    if not valid then log("preparacao recusada: " .. tostring(reason)); return false, reason end
     local recipe = {}; for i, id in ipairs(item.recipe) do recipe[i] = id end
     self.prepared = {hash = GetPtrHash(player), item = {id = item.id, name = item.name, recipe = recipe}}
     self.started, self.armed = nil, false
+    log("receita preparada; jogador=" .. tostring(player:GetPlayerIndex()) .. ", item=" .. tostring(item.id))
     return true, "Receita pronta: feche e segure Q"
 end
 
@@ -69,7 +70,7 @@ function Crafting:Progress(now)
     return math.min(1, math.max(0, (now - self.started) / self.duration))
 end
 
-function Crafting:Validate(player, item, expectedRevision)
+function Crafting:Validate(player, item, expectedRevision, forDelivery)
     if not self.storage.initialized or not player or not item then return false, "Jogador indisponivel" end
     local ok, result, pool, slot = pcall(function()
         if not player:Exists() or player:IsDead() then return nil, "Jogador indisponivel" end
@@ -95,14 +96,21 @@ function Crafting:Validate(player, item, expectedRevision)
         local counts = self.storage:CountsByType(player)
         for id, count in pairs(needed) do if (counts[id] or 0) < count then return nil, "Ingredientes insuficientes" end end
         local config = Isaac.GetItemConfig():GetCollectible(item.id)
-        if not config or not config:IsAvailable() then return nil, "Item bloqueado ou indisponivel" end
-        if not player:CanAddCollectibleToInventory(item.id) then return nil, "Inventario indisponivel" end
-        local activeSlot = ActiveSlot.SLOT_PRIMARY
-        if config.Type == ItemType.ITEM_ACTIVE and player:GetActiveItem(activeSlot) ~= 0 then
-            return nil, "Esvazie o espaco de item ativo"
+        if not config then return nil, "Item nao encontrado" end
+        local achievement = config.AchievementID
+        if achievement ~= -1 and not Isaac.GetPersistentGameData():Unlocked(achievement) then
+            return nil, "Item nao desbloqueado"
         end
+        local activeSlot = ActiveSlot.SLOT_PRIMARY
         local id, itemPool = EntityPlayer.CalculateBagOfCraftingOutput(item.recipe)
         if id ~= item.id then return nil, "Receita alterada; selecione novamente" end
+        if forDelivery then
+            if not config:IsAvailable() then return nil, "Item indisponivel nesta partida" end
+            if not player:CanAddCollectibleToInventory(item.id) then return nil, "Inventario indisponivel" end
+            if config.Type == ItemType.ITEM_ACTIVE and player:GetActiveItem(activeSlot) ~= 0 then
+                return nil, "Esvazie o espaco de item ativo"
+            end
+        end
         return true, itemPool, activeSlot
     end)
     if not ok then log("validacao falhou: " .. tostring(result)); return false, "Erro de validacao" end
@@ -115,7 +123,7 @@ function Crafting:Execute(player, item)
     self.busy = true
     local ok, success, message = pcall(function()
         if not player then return false, "Jogador indisponivel" end
-        local valid, pool, slot = self:Validate(player, item, self.storage:GetRevision(player))
+        local valid, pool, slot = self:Validate(player, item, self.storage:GetRevision(player), true)
         if not valid then return false, pool end
         -- Never compete with a native bag that already contains ingredients.
         for _, id in ipairs(player:GetBagOfCraftingContent()) do
