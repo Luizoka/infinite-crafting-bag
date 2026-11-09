@@ -115,6 +115,41 @@ function Storage:CountsByType(player)
 	return snapshot
 end
 
+-- Validate the whole multiset before changing the inventory.
+function Storage:ConsumeRecipe(player, recipe)
+	if type(recipe) ~= "table" or #recipe ~= 8 then return nil, "Receita invalida" end
+	local needed, entries = {}, 0
+	for key, id in pairs(recipe) do
+		entries = entries + 1
+		if type(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > 8
+			or type(id) ~= "number" or id % 1 ~= 0 or id <= 0 then return nil, "Receita invalida" end
+		needed[id] = (needed[id] or 0) + 1
+	end
+	if entries ~= 8 then return nil, "Receita invalida" end
+	local counts = self:GetTypeCounts(player)
+	for id, amount in pairs(needed) do
+		if (counts[id] or 0) < amount then return nil, "Ingredientes insuficientes" end
+	end
+	local key, data = playerKey(player), self:GetPlayer(player)
+	local original, remaining = data.ingredients, {}
+	for _, id in ipairs(original) do
+		if (needed[id] or 0) > 0 then needed[id] = needed[id] - 1
+		else remaining[#remaining + 1] = id end
+	end
+	data.ingredients = remaining
+	self.typeCounts[key] = nil
+	self.revisions[key] = (self.revisions[key] or 0) + 1
+	return {key = key, original = original, revision = self.revisions[key]}
+end
+
+function Storage:RollbackRecipe(transaction)
+	if not transaction or self.revisions[transaction.key] ~= transaction.revision then return false end
+	self.players[transaction.key].ingredients = transaction.original
+	self.typeCounts[transaction.key] = nil
+	self.revisions[transaction.key] = transaction.revision + 1
+	return true
+end
+
 function Storage:InspectSavedData(source)
 	local hasData = self.mod:HasData()
 	log(source .. "; HasData=" .. tostring(hasData))
@@ -255,6 +290,7 @@ function Storage:Save(reason, allowEmpty)
 	log("SaveData chamado; jogadores=" .. summarize(self.players) .. ", bytes=" .. #encoded
 		.. ", diagnostic=" .. TEST_MARKER.test .. "/" .. TEST_MARKER.value
 		.. ", HasDataAfter=" .. (okHasAfter and tostring(hasAfter) or "ERRO:" .. tostring(hasAfter)))
+	return true
 end
 
 return Storage

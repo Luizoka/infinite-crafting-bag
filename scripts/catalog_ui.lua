@@ -1,5 +1,6 @@
 local Catalog = include("scripts/catalog")
 local InputState = include("scripts/catalog_input")
+local Crafting = include("scripts/crafting")
 local UI = { open = false, focus = "closed", playerNumber = 0, epoch = 0, query = "", editing = false,
     availability = "all", quality = -1, selected = 1, inventoryView = false, inventoryOffset = 0 }
 
@@ -36,6 +37,7 @@ end
 
 function UI:Init(mod, storage)
     self.storage = storage
+    self.crafting = Crafting.new(storage)
     self.font = Font()
     self.font:Load("font/pftempestasevencondensed.fnt")
     self.catalog = Catalog.new(function(recipe)
@@ -56,7 +58,10 @@ function UI:Init(mod, storage)
     mod:AddCallback(ModCallbacks.MC_POST_RENDER, function() self:HandleInput() end)
     mod:AddCallback(ModCallbacks.MC_POST_HUD_RENDER, function() self:Render() end)
     mod:AddCallback(ModCallbacks.MC_POST_NEW_ROOM, function() self.epoch = self.epoch + 1 end)
-    mod:AddCallback(ModCallbacks.MC_POST_ADD_COLLECTIBLE, function() self.epoch = self.epoch + 1 end)
+    mod:AddCallback(ModCallbacks.MC_POST_ADD_COLLECTIBLE, function(_, id, _, _, _, _, player)
+        self.epoch = self.epoch + 1
+        self.crafting:Observe(id, player)
+    end)
     mod:AddCallback(ModCallbacks.MC_POST_ACHIEVEMENT_UNLOCK, function() self.epoch = self.epoch + 1 end)
     mod:AddCallback(ModCallbacks.MC_POST_GET_COLLECTIBLE, function(_, _, _, decrease)
         if decrease and not self.calculating then self.epoch = self.epoch + 1 end
@@ -97,6 +102,7 @@ function UI:SetFocus(focus)
     self.inventoryView = focus == "inventory"
     if self.input then self.input:SuppressHeld() end
     if focus == "closed" then
+        self.pending, self.message, self.preferredId = nil, nil, nil
         self.query, self.searchBefore = "", nil
         self.availability, self.quality = "all", -1
         self.selected, self.inventoryOffset = 1, 0
@@ -112,7 +118,14 @@ function UI:FilteredList()
         local quality = self.quality >= 0 and self.quality or nil
         self.list = c:Filter(self.query, self.availability, quality)
         self.listKey = listKey
-        if oldItem then
+        local restored = false
+        if self.preferredId then
+            for i, item in ipairs(self.list) do
+                if item.id == self.preferredId then self.selected = i; self.preferredId = nil; restored = true; break end
+            end
+            if c.state ~= "working" then self.preferredId = nil end
+        end
+        if oldItem and not restored then
             for i, item in ipairs(self.list) do
                 if item.id == oldItem.id then self.selected = i; break end
             end
@@ -167,6 +180,25 @@ function UI:HandleInput()
         end
         return
     end
+    if self.focus == "confirm" then
+        if event[Keyboard.KEY_ESCAPE] then
+            self.pending = nil
+            self:SetFocus("results")
+        elseif event[Keyboard.KEY_ENTER] and self.pending then
+            local pending = self.pending
+            self.pending = nil
+            local success, message
+            if self:GetPlayer() ~= pending.player then
+                success, message = false, "Jogador alterado"
+            else
+                success, message = self.crafting:Execute(pending.player, pending.item, pending.revision)
+            end
+            self.message, self.messageUntil = message, Isaac.GetTime() + 4000
+            if success then self.preferredId = pending.item.id end
+            self:SetFocus("results")
+        end
+        return
+    end
     if event[Keyboard.KEY_I] then
         self:SetFocus(self.open and "closed" or "results")
     elseif not self.open then
@@ -180,6 +212,17 @@ function UI:HandleInput()
         self.lastSnapshot = nil
         self:ResetListSelection()
     elseif self.focus == "results" and event[Keyboard.KEY_ENTER] then
+        local item = self:FilteredList()[self.selected]
+        local player = self:GetPlayer()
+        if item and player then
+            local copy = {}; for i, id in ipairs(item.recipe) do copy[i] = id end
+            local chosen = {id = item.id, name = item.name, quality = item.quality, gfx = item.gfx, recipe = copy}
+            local revision = self.storage:GetRevision(player)
+            local valid, reason = self.crafting:Validate(player, chosen, revision)
+            self.pending = {player = player, item = chosen, revision = revision, valid = valid, reason = reason}
+            self:SetFocus("confirm")
+        end
+    elseif self.focus == "results" and event[Keyboard.KEY_S] then
         self.searchBefore = self.query
         self:SetFocus("search")
     elseif self.focus == "results" and event[Keyboard.KEY_R] then
@@ -220,7 +263,7 @@ function UI:Update()
         self.catalog:Refresh(self.counts, snapshot)
         self.lastSnapshot = snapshot
         self.inventoryOffset = 0
-        self:ResetListSelection()
+        self.listKey = nil
     end
     self.catalog:Step(128, 8)
 end
@@ -268,8 +311,24 @@ function UI:Render()
     Isaac.DrawQuad(Vector(x,y), Vector(x+410*s,y), Vector(x,y+260*s), Vector(x+410*s,y+260*s), bg, 1)
     draw("INFINITE CRAFTING BAG", 12, 8, 1, gold)
     draw("Jogador " .. (self.playerNumber + 1) .. "  |  Ingredientes: " .. self.storage:Count(player), 12, 24, 0.8, white)
-    draw("I fechar   Enter buscar   Tab estoque   P jogador", 12, 39, 0.72, white)
+    draw("I fechar  Enter fabricar  S buscar  Tab estoque  P jogador", 12, 39, 0.68, white)
     draw("Setas: navegar   PgUp/PgDn: paginas", 12, 247, 0.68, white)
+    if self.focus == "confirm" and self.pending then
+        local pending, item = self.pending, self.pending.item
+        self:Icon(item, x + 28*s, y + 78*s, s)
+        draw("CONFIRMAR FABRICACAO", 12, 55, 0.9, gold)
+        draw(shortName(item.name, 38) .. "  [Q" .. tostring(item.quality) .. "]", 48, 72, 0.85, white)
+        local counts = self.storage:CountsByType(pending.player)
+        local used = {}; for _, id in ipairs(item.recipe) do used[id] = (used[id] or 0) + 1 end
+        for n, id in ipairs(item.recipe) do
+            local col, row = (n - 1) % 2, math.floor((n - 1) / 2)
+            draw(ingredientName(id) .. " " .. (counts[id] or 0) .. "/" .. used[id], 12 + col * 195, 100 + row * 20, 0.74, white)
+        end
+        local stale = self.storage:GetRevision(pending.player) ~= pending.revision
+        draw(stale and "ESTOQUE ALTERADO" or pending.valid and "RECEITA VALIDA" or (pending.reason or "INDISPONIVEL"), 12, 196, 0.8, gold)
+        draw("Enter confirmar    Esc cancelar", 12, 220, 0.8, white)
+        return
+    end
     if self.inventoryView then
         draw("ESTOQUE - setas para rolar", 12, 57, 0.9, gold)
         local ids = self.inventoryIds or {}
@@ -311,7 +370,8 @@ function UI:Render()
         for n, id in ipairs(ids) do
             draw(ingredientName(id) .. " x" .. used[id], 12 + ((n - 1) % 4) * 98, 225 + math.floor((n - 1) / 4) * 11, 0.62, white)
         end
-    elseif #list == 0 then draw("Nenhum item encontrado", 12, 103, 0.8, white) end
+    elseif #list == 0 then draw(self.storage:Count(player) < 8 and "Ingredientes insuficientes (minimo 8)" or "Nenhum item encontrado", 12, 103, 0.8, white) end
+    if self.message and Isaac.GetTime() < self.messageUntil then draw(self.message, 210, 68, 0.7, gold) end
 end
 
 return UI
