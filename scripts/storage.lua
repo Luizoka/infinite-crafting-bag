@@ -56,6 +56,9 @@ end
 function Storage:Init(mod)
 	self.mod = mod
 	self.players = {}
+	self.revisions = {}
+	self.typeCounts = {}
+	self.runRevision = 0
 	self.initialized = false
 	self.isContinued = nil
 	self.runSeed = nil
@@ -71,21 +74,45 @@ end
 
 function Storage:Add(player, pickupIds)
 	local inventory = self:GetPlayer(player).ingredients
+	local counts = self:GetTypeCounts(player)
+	local added = false
 	for _, pickupId in ipairs(pickupIds) do
-		if type(pickupId) == "number" and pickupId > 0 then table.insert(inventory, pickupId) end
+		if type(pickupId) == "number" and pickupId > 0 then
+			table.insert(inventory, pickupId)
+			counts[pickupId] = (counts[pickupId] or 0) + 1
+			added = true
+		end
 	end
+	if added then
+		local key = playerKey(player)
+		self.revisions[key] = (self.revisions[key] or 0) + 1
+	end
+end
+
+function Storage:GetRevision(player)
+	return tostring(self.runRevision) .. ":" .. tostring(self.revisions[playerKey(player)] or 0)
 end
 
 function Storage:Count(player)
 	return #self:GetPlayer(player).ingredients
 end
 
-function Storage:CountsByType(player)
-	local counts = {}
-	for _, pickupId in ipairs(self:GetPlayer(player).ingredients) do
-		counts[pickupId] = (counts[pickupId] or 0) + 1
+function Storage:GetTypeCounts(player)
+	local key = playerKey(player)
+	if not self.typeCounts[key] then
+		local counts = {}
+		for _, pickupId in ipairs(self:GetPlayer(player).ingredients) do
+			counts[pickupId] = (counts[pickupId] or 0) + 1
+		end
+		self.typeCounts[key] = counts
 	end
-	return counts
+	return self.typeCounts[key]
+end
+
+function Storage:CountsByType(player)
+	local snapshot = {}
+	for id, count in pairs(self:GetTypeCounts(player)) do snapshot[id] = count end
+	return snapshot
 end
 
 function Storage:InspectSavedData(source)
@@ -134,6 +161,9 @@ function Storage:InspectSavedData(source)
 end
 
 function Storage:OnGameStarted(isContinued)
+	self.runRevision = self.runRevision + 1
+	self.revisions = {}
+	self.typeCounts = {}
 	local seed = startSeed()
 	log("MC_POST_GAME_STARTED; isContinued=" .. tostring(isContinued)
 		.. ", gameFrame=" .. gameFrame() .. ", runSeed=" .. tostring(seed)

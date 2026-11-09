@@ -1,35 +1,47 @@
 # Infinite Crafting Bag
 
-Mod for Repentance+ with REPENTOGON. This first delivery implements ingredient storage and a small diagnostic inventory overlay. Recipe discovery and crafting are not implemented yet.
+Mod for The Binding of Isaac: Repentance+ with REPENTOGON. The Bag of Crafting stores collected ingredients in a virtual per-player inventory. The catalog previews possible results; it does not craft items or consume ingredients.
 
-## Phase 1 strategy
+## Controls
 
-`MC_TRY_ADD_TO_BAG_OF_CRAFTING` supplies the effective ingredient ID list for the pickup, which may contain multiple IDs or be empty. The mod allows the game's normal collection behavior to proceed. `MC_POST_ADD_TO_BAG_OF_CRAFTING` confirms a successful addition; only then does the mod append those IDs to that player's external inventory, clear the native Bag of Crafting through `SetBagOfCraftingContent({})`, and save.
+- **I** opens or closes the catalog. While editing the search, press Enter or Escape to finish editing first.
+- **Enter** edits the name search; type letters, numbers or spaces and use Backspace to delete.
+- **Up/Down** selects an item or scrolls the ingredient inventory; **Page Up/Page Down** move through the item list.
+- **F** cycles item availability filters (all, unlocked, locked). **Q** cycles quality filters (all, 0–4).
+- **Tab** switches between the item list and ingredient inventory. **P** selects the next player.
 
-The native bag therefore acts as a short-lived transfer buffer. It is cleared after each confirmed pickup, before it can accumulate to eight ingredients and trigger the native full-bag behavior. The mod does not use the physical pickup variant as a substitute for the effective ingredient IDs. It never extends the native bag array.
+The catalog considers only items discovered from the selected player's current stock. Availability refers to `ItemConfig:IsAvailable()`; the locked filter is not a complete list of all locked collectibles. Search uses the localized item name when available and supports ASCII case-insensitive typing.
 
-This callback sequence is documented by REPENTOGON, but it has not yet been exercised in Isaac. In particular, verify in-game that clearing the bag inside `MC_POST_ADD_TO_BAG_OF_CRAFTING` happens after all native pickup effects and does not interfere with collection animation or other mods.
+## Recipe search
 
-## Controls and storage
+The mod counts ingredients by type and generates bounded combinations of eight in sorted order, so permutations are evaluated once. Each combination is passed to REPENTOGON's `EntityPlayer.CalculateBagOfCraftingOutput`; the returned collectible ID identifies the entry, and the first discovered recipe is kept. No collectible is granted and the stock is not modified.
 
-- The total ingredient count is shown in the HUD.
-- Press **I** to open or close the per-player breakdown (up to ten ingredient types are displayed at once).
-- Ingredient IDs are stored separately per REPENTOGON player index.
-- The inventory is written with `Mod:SaveData` after each confirmed pickup, on room changes, and on an exit where `ShouldSave` is true. It is restored in `MC_POST_GAME_STARTED` when `IsContinued` is true. Writes before the run starts and empty writes during initialization are skipped.
-- `[ICB DEBUG]` logs report callback order, player indexes/controllers, `HasData`, JSON decode status, inventory totals, save payload size, and a `diagnostic` marker (`persistencia` / `12345`) stored alongside the inventory. Missing save data allows subsequent pickups to be saved. Invalid data, including legacy data without a run seed, is preserved and blocks writes until it can be investigated.
+The search runs only while the catalog is open. It processes at most 256 traversal steps and 16 native recipe calculations per update, and stops after 50,000 combinations. The display distinguishes complete, in-progress, limited and error states, and reports evaluated combinations out of the total. A single current-stock/context cache is reused when reopening; it is discarded when the stock, seed, player, room, achievement or observed item-pool state changes. A bounded sprite cache holds up to 64 icons.
 
-## In-game acceptance check
+The native function calculates an output for one combination; it does not provide a reverse index of all recipes. The catalog is therefore incomplete while searching or after reaching the limit. Custom mods may change pools or availability in ways not covered by the observed callbacks; results are previews and require in-game verification. The native API documentation does not specify all side effects or detail every pool/unlock interaction, so those behaviors should be verified with the installed REPENTOGON version. No tables or assets from External Item Descriptions are required.
 
-1. Start a run as Tainted Cain and pick up a normal ingredient. Confirm the count increases by the number of effective ingredients shown in the breakdown.
-2. Collect at least ten ingredients. Confirm each pickup is collected, the total exceeds eight, and the native bag does not craft automatically or repel pickups because it is full.
-3. Save and exit, continue the same run, and confirm the count and ingredient types remain.
-4. Start a fresh run and confirm its count starts at zero.
-5. In co-op, if available, collect different ingredients with each player and confirm their displayed counts remain separate.
+## Persistence
 
-If pickup collection fails after the eighth ingredient, disable this build and report the game/REPENTOGON versions and log. The first fallback to investigate is moving the transfer from the post-add callback to a confirmed pickup-state transition, since returning `false` from the pre-add callback explicitly repels the pickup according to the REPENTOGON docs.
+The inventory remains stored via the existing `Mod:SaveData` flow. `[ICB DEBUG]` logs include save/load diagnostics. Data that exists but is invalid is retained rather than overwritten.
 
-## Current limits
+## Tests
 
-- The Isaac runtime is not available in this workspace, so Lua callback execution, HUD placement, pickup handling, and save/continue behavior still require manual validation in-game.
-- Recipe catalog, recipe selection, and crafting are not part of this delivery.
-- Ingredient count is practically bounded by save-file size and runtime memory.
+With Lua 5.3 or later, run from the project root:
+
+```
+lua tests/catalog_spec.lua
+lua tests/catalog_ui_spec.lua
+lua tests/storage_catalog_spec.lua
+```
+
+The tests mock the Isaac API and native calculator; they do not verify game rendering or real recipe results.
+
+## In-game validation
+
+1. Start or continue a Tainted Cain run, collect at least eight ingredients, and press **I**.
+2. Check the ingredient inventory with **Tab**, then return to the list. Verify the progress changes to complete or explicitly reports an incomplete search.
+3. Navigate the results and compare an eight-ingredient recipe and its output with the game's native Bag of Crafting behavior. Search for a displayed item and exercise both filters.
+4. Close the catalog and verify movement, shooting and item controls resume. Confirm that opening and selecting entries did not consume ingredients or give an item.
+5. Collect another ingredient and check that the search restarts. Save, exit and continue to verify the stock and catalog rebuild.
+
+The visual interface, native results, input handling and persistence regression still need validation in Isaac.

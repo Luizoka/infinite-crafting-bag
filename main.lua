@@ -9,7 +9,7 @@ local mod = RegisterMod("Infinite Crafting Bag", 1)
 
 local Storage = include("scripts/storage")
 local Capture = include("scripts/capture")
-local UI = include("scripts/diagnostics")
+local UI = include("scripts/catalog_ui")
 
 Storage:Init(mod)
 Capture:Init(mod, Storage)
