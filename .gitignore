@@ -1,0 +1,17 @@
+# Local game and mod data
+save*.dat
+savedata/
+log.txt
+*.log
+
+# Editor and local agent settings
+.vscode/
+.idea/
+.agents/
+.codex/
+.aws/
+
+# Operating system files
+Thumbs.db
+desktop.ini
+.DS_Store
