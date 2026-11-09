@@ -33,46 +33,18 @@ local function player(index)
     function p:HasCollectible() return true end
     function p:CanAddCollectibleToInventory() return true end
     function p:GetActiveItem() return self.active or 0 end
-    function p:AddCollectible(id) self.given[#self.given+1]=id; crafting:Observe(id,wrapper(self.identity or self)) end
+    function p:AddCollectible() error("unexpected collectible delivery") end
     return p
 end
 local p, other=player(0), player(1); players={p,other}
 local recipe={1,1,1,1,2,2,2,2}
 local item={id=101,recipe=recipe}
-local function execute(who, target, rev) return crafting:Execute(who,target or item,rev or storage:GetRevision(who)) end
+assert(crafting.Execute == nil and crafting.Observe == nil, "direct crafting must be unavailable")
 storage:Add(p,recipe); storage:Add(other,recipe)
-assert(execute(wrapper(p))); assert(storage:Count(p)==0 and #p.given==1 and storage:Count(other)==8)
-assert(raw and savedPayload.players['0'] and #savedPayload.players['0'].ingredients==0)
-storage:OnGameStarted(true); assert(storage:Count(p)==0 and storage:Count(other)==8, 'restore consumed stock')
-storage:Add(p,{1,1,1,1,2,2,2,2,3,3,3,3,3,3,3,3})
-assert(execute(p)); assert(storage:Count(p)==8 and storage:CountsByType(p)[3]==8)
-local before=storage:GetRevision(p)
-assert(not execute(p)); assert(storage:Count(p)==8 and storage:GetRevision(p)==before)
-storage:Add(p,recipe); local stale=storage:GetRevision(p); storage:Add(p,{4})
-assert(not execute(p,item,stale)); assert(storage:Count(p)==17)
-output=102; assert(not execute(p)); assert(storage:Count(p)==17); output=101
-assert(not crafting:Execute(nil,item,"x")); assert(storage:Count(p)==17)
-config.IsAvailable=function() return false end
-assert(not execute(p)); assert(storage:Count(p)==17)
-config.IsAvailable=function() return true end
-config.Type=ItemType.ITEM_ACTIVE; p.active=55; assert(not execute(p)); assert(storage:Count(p)==17)
-p.active=0; config.Type=1
-local oldSave=mod.SaveData; mod.SaveData=function() error('save failed') end
-assert(not execute(p)); assert(storage:Count(p)==17 and #p.given==2, 'save failure must roll back before delivery')
-mod.SaveData=oldSave
-assert(execute(p)); assert(storage:Count(p)==9)
-local second={id=102,recipe={3,3,3,3,3,3,3,3}}; output=102
-assert(execute(p,second)); assert(storage:Count(p)==1 and #p.given==4 and p.given[4]==102)
-assert(execute(other)==false, 'result mismatch for other player')
-output=101; assert(execute(other)); assert(storage:Count(other)==0 and storage:Count(p)==1)
-storage:OnGameStarted(true); assert(storage:Count(p)==1 and storage:Count(other)==0)
--- A recursive confirmation from another callback cannot grant another item.
-storage:Add(other,recipe)
-other.AddCollectible=function(self,id)
-    assert(not execute(self)); self.given[#self.given+1]=id; crafting:Observe(id,self)
-end
-assert(execute(other)); assert(#other.given==2 and storage:Count(other)==0)
--- An exception after granting is ambiguous: do not refund it.
-storage:Add(p,recipe); p.AddCollectible=function(self,id) self.given[#self.given+1]=id; error('after grant') end
-assert(not execute(p)); assert(storage:Count(p)==1 and #p.given == 5)
-print('PASS crafting: validation, consumption, save/continue, failures and players')
+local revision=storage:GetRevision(p)
+assert(crafting:Validate(wrapper(p),item,revision))
+assert(storage:Count(p)==8 and storage:Count(other)==8 and #p.given==0)
+output=102; assert(not crafting:Validate(p,item,revision)); output=101
+storage:Add(p,{3}); assert(not crafting:Validate(p,item,revision))
+assert(storage:Count(p)==9 and #p.given==0)
+print('PASS recipe validation: no delivery, no consumption, players isolated')

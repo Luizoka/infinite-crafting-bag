@@ -7,7 +7,7 @@ ModCallbacks = { MC_POST_UPDATE=1, MC_POST_HUD_RENDER=2, MC_POST_NEW_ROOM=3, MC_
     MC_POST_ACHIEVEMENT_UNLOCK=5, MC_POST_GET_COLLECTIBLE=6, MC_POST_GAME_STARTED=7, MC_INPUT_ACTION=8,
     MC_POST_RENDER=9, MC_PRE_GAME_EXIT=10 }
 local held, now, nativeCalls, paused = {}, 0, 0, false
-local screenW, screenH, icons, texts, locked = 442, 286, {}, {}, {}
+local screenW, screenH, icons, texts, locked, quads = 442, 286, {}, {}, {}, {}
 Input = {IsButtonPressed=function(k) return held[k] or false end}
 EntityPlayer = {CalculateBagOfCraftingOutput=function(recipe)
     nativeCalls=nativeCalls+1; assert(#recipe==8)
@@ -28,7 +28,7 @@ function Sprite() return {Load=function() end, ReplaceSpritesheet=function() end
         GetHeight=function() return 32 end, GetPivot=function() return {Y=16} end,
         GetScale=function() return {Y=1} end} end} end
 Isaac = {DebugString=function() end, GetPlayer=function() return setmetatable({identity=player}, {__index=player}) end, GetTime=function() return now end, GetScreenWidth=function() return screenW end,
-    GetScreenHeight=function() return screenH end, DrawQuad=function() end,
+    GetScreenHeight=function() return screenH end, DrawQuad=function(a,b,c,d) quads[#quads+1]={a,b,c,d} end,
     GetItemConfig=function() return {GetCollectible=function(_,id) return {Name="Test Item "..id,Quality=2,
         GfxFileName="gfx/test.png",AchievementID=id,IsAvailable=function() return false end} end} end,
     GetPersistentGameData=function() return {Unlocked=function(_,id) return not locked[id] end} end}
@@ -63,6 +63,19 @@ local function checkAlignment()
     end
 end
 checkAlignment(); screenW,screenH=300,190; checkAlignment(); screenW,screenH=442,286
+local function scrollbar()
+    quads={}; ui:Render(); assert(#quads==3)
+    return quads[2],quads[3]
+end
+local track, thumb=scrollbar()
+assert(math.abs(thumb[1][2]-track[1][2])<0.0001)
+assert(math.abs((thumb[3][2]-thumb[1][2])/(track[3][2]-track[1][2])-8/9)<0.0001)
+press(Keyboard.KEY_PAGE_DOWN)
+track,thumb=scrollbar(); assert(math.abs(thumb[3][2]-track[3][2])<0.0001)
+press(Keyboard.KEY_PAGE_UP); assert(ui.selected==1)
+screenW,screenH=300,190
+track,thumb=scrollbar(); assert(math.abs(thumb[1][2]-track[1][2])<0.0001)
+screenW,screenH=442,286
 held[Keyboard.KEY_DOWN]=true; tick(16, false)
 held[Keyboard.KEY_DOWN]=nil; tick(16, false)
 assert(ui.selected == 2, "short press between game updates must move exactly one")
@@ -74,19 +87,15 @@ tick(2000); assert(ui.selected == 6, "stalled frame must not produce multiple st
 held[Keyboard.KEY_DOWN]=nil; tick()
 press(Keyboard.KEY_UP); assert(ui.selected == 5)
 checkAlignment()
-ui.crafting.Validate=function() return true end
-local crafts=0
-ui.crafting.Execute=function() crafts=crafts+1; return true, "ok" end
-press(Keyboard.KEY_ENTER); assert(ui.focus == "confirm")
-press(Keyboard.KEY_ESCAPE); assert(ui.focus == "results" and ui.pending == nil and crafts == 0)
-held[Keyboard.KEY_ENTER]=true; tick(); assert(ui.focus == "confirm")
+local validations=0
+ui.crafting.Validate=function() validations=validations+1; return true end
+ui.crafting.Execute=function() error("Enter must never invoke item delivery") end
+for _=1,3 do press(Keyboard.KEY_ENTER) end
+assert(ui.focus == "results" and validations == 3 and ui.message:find("indisponivel"))
+held[Keyboard.KEY_ENTER]=true; tick()
 for _=1,10 do tick() end
-assert(crafts == 0, "holding Enter must not confirm")
 held[Keyboard.KEY_ENTER]=nil; tick()
-held[Keyboard.KEY_ENTER]=true; tick(); assert(crafts == 1 and ui.focus == "results")
-for _=1,10 do tick() end
-assert(crafts == 1, "holding Enter must not craft twice")
-held[Keyboard.KEY_ENTER]=nil; tick()
+assert(validations == 4 and storage:Count(player)==16, "Enter must not consume stock")
 press(Keyboard.KEY_F); assert(ui.availability == "available", "F must not change the availability filter")
 assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,player,0,ButtonAction.ACTION_FULLSCREEN) == nil)
 assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,nil,0,ButtonAction.ACTION_FULLSCREEN) == nil)
@@ -127,6 +136,7 @@ press(Keyboard.KEY_I)
 while ui.catalog.state == "working" do tick() end
 assert(ui.availability == "available" and #ui:FilteredList() == 8)
 for _, item in ipairs(ui:FilteredList()) do assert(item.id ~= 123) end
+quads={}; ui:Render(); assert(#quads==1, "no scrollbar when items fit")
 press(Keyboard.KEY_R); assert(ui.availability == "all" and #ui:FilteredList() == 9)
 press(Keyboard.KEY_R); assert(ui.availability == "locked" and #ui:FilteredList() == 1 and ui:FilteredList()[1].id==123)
 press(Keyboard.KEY_R); assert(ui.availability == "available" and #ui:FilteredList() == 8)

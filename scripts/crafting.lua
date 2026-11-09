@@ -1,5 +1,3 @@
--- The native AddCollectible call returns void. A post callback is our evidence of
--- delivery; a cancelled/changed call is ambiguous, so never refund it blindly.
 local Crafting = {}
 Crafting.__index = Crafting
 
@@ -9,12 +7,6 @@ end
 
 function Crafting.new(storage)
     return setmetatable({storage = storage, busy = false}, Crafting)
-end
-
-function Crafting:Observe(id, player)
-    if self.attempt and player and GetPtrHash(player) == self.attempt.playerHash then
-        self.attempt.observed = id
-    end
 end
 
 function Crafting:Validate(player, item, expectedRevision)
@@ -56,39 +48,6 @@ function Crafting:Validate(player, item, expectedRevision)
     if not ok then log("validacao falhou: " .. tostring(result)); return false, "Erro de validacao" end
     if not result then return false, pool end
     return true, pool, slot
-end
-
-function Crafting:Execute(player, item, revision)
-    if self.busy then return false, "Fabricacao em andamento" end
-    self.busy = true
-    local ok, success, message = pcall(function()
-        local valid, pool, slot = self:Validate(player, item, revision)
-        if not valid then return false, pool end
-        local transaction, err = self.storage:ConsumeRecipe(player, item.recipe)
-        if not transaction then return false, err end
-        -- Persist the debit before invoking callbacks that may grant an item.
-        local saved, savedResult = pcall(self.storage.Save, self.storage, "craft debit", true)
-        if not saved or not savedResult then
-            self.storage:RollbackRecipe(transaction)
-            return false, "Falha ao salvar; nada entregue"
-        end
-        self.attempt = {playerHash = GetPtrHash(player)}
-        local delivered, failure = pcall(function()
-            player:AddCollectible(item.id, 0, true, slot, 0, pool)
-        end)
-        local observed = self.attempt.observed
-        self.attempt = nil
-        if delivered and observed == item.id then return true, "Item fabricado!" end
-        -- Once AddCollectible has been entered other mods may have run effects,
-        -- changed the item, or thrown after granting it. Its void return cannot
-        -- prove absence of side effects; retaining the debit avoids duplication.
-        log("entrega incerta; item=" .. tostring(item.id) .. " observado=" .. tostring(observed) .. " erro=" .. tostring(failure))
-        return false, "Entrega incerta; consulte o log"
-    end)
-    self.attempt, self.busy = nil, false
-    if not ok then log("erro inesperado: " .. tostring(success)); return false, "Erro; consulte o log" end
-    if not success then log(message) end
-    return success, message
 end
 
 return Crafting

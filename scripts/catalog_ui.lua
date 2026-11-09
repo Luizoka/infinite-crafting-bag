@@ -60,9 +60,8 @@ function UI:Init(mod, storage)
     mod:AddCallback(ModCallbacks.MC_POST_RENDER, function() self:HandleInput() end)
     mod:AddCallback(ModCallbacks.MC_POST_HUD_RENDER, function() self:Render() end)
     mod:AddCallback(ModCallbacks.MC_POST_NEW_ROOM, function() self.epoch = self.epoch + 1 end)
-    mod:AddCallback(ModCallbacks.MC_POST_ADD_COLLECTIBLE, function(_, id, _, _, _, _, player)
+    mod:AddCallback(ModCallbacks.MC_POST_ADD_COLLECTIBLE, function()
         self.epoch = self.epoch + 1
-        self.crafting:Observe(id, player)
     end)
     mod:AddCallback(ModCallbacks.MC_POST_ACHIEVEMENT_UNLOCK, function() self.epoch = self.epoch + 1 end)
     mod:AddCallback(ModCallbacks.MC_POST_GET_COLLECTIBLE, function(_, _, _, decrease)
@@ -182,26 +181,6 @@ function UI:HandleInput()
         end
         return
     end
-    if self.focus == "confirm" then
-        if event[Keyboard.KEY_ESCAPE] then
-            self.pending = nil
-            self:SetFocus("results")
-        elseif event[Keyboard.KEY_ENTER] and self.pending then
-            local pending = self.pending
-            self.pending = nil
-            local success, message
-            local currentPlayer = self:GetPlayer()
-            if not currentPlayer or GetPtrHash(currentPlayer) ~= GetPtrHash(pending.player) then
-                success, message = false, "Jogador alterado"
-            else
-                success, message = self.crafting:Execute(pending.player, pending.item, pending.revision)
-            end
-            self.message, self.messageUntil = message, Isaac.GetTime() + 4000
-            if success then self.preferredId = pending.item.id end
-            self:SetFocus("results")
-        end
-        return
-    end
     if event[Keyboard.KEY_I] then
         self:SetFocus(self.open and "closed" or "results")
     elseif not self.open then
@@ -218,12 +197,10 @@ function UI:HandleInput()
         local item = self:FilteredList()[self.selected]
         local player = self:GetPlayer()
         if item and player then
-            local copy = {}; for i, id in ipairs(item.recipe) do copy[i] = id end
-            local chosen = {id = item.id, name = item.name, quality = item.quality, gfx = item.gfx, recipe = copy}
             local revision = self.storage:GetRevision(player)
-            local valid, reason = self.crafting:Validate(player, chosen, revision)
-            self.pending = {player = player, item = chosen, revision = revision, valid = valid, reason = reason}
-            self:SetFocus("confirm")
+            local valid, reason = self.crafting:Validate(player, item, revision)
+            self.message = valid and "Q indisponivel: receita nao carregada" or reason
+            self.messageUntil = Isaac.GetTime() + 4000
         end
     elseif self.focus == "results" and event[Keyboard.KEY_S] then
         self.searchBefore = self.query
@@ -326,24 +303,8 @@ function UI:Render()
     Isaac.DrawQuad(Vector(x,y), Vector(x+410*s,y), Vector(x,y+260*s), Vector(x+410*s,y+260*s), bg, 1)
     draw("INFINITE CRAFTING BAG", 12, 8, 1, gold)
     draw("Jogador " .. (self.playerNumber + 1) .. "  |  Ingredientes: " .. self.storage:Count(player), 12, 24, 0.8, white)
-    draw("I fechar  Enter fabricar  S buscar  Tab estoque  P jogador", 12, 39, 0.68, white)
+    draw("I fechar  Enter selecionar  S buscar  Tab estoque  P jogador", 12, 39, 0.65, white)
     draw("Setas: navegar   PgUp/PgDn: paginas", 12, 247, 0.68, white)
-    if self.focus == "confirm" and self.pending then
-        local pending, item = self.pending, self.pending.item
-        self:Icon(item, x + 28*s, y + 78*s, s)
-        draw("CONFIRMAR FABRICACAO", 12, 55, 0.9, gold)
-        draw(shortName(item.name, 38) .. "  [Q" .. tostring(item.quality) .. "]", 48, 72, 0.85, white)
-        local counts = self.storage:CountsByType(pending.player)
-        local used = {}; for _, id in ipairs(item.recipe) do used[id] = (used[id] or 0) + 1 end
-        for n, id in ipairs(item.recipe) do
-            local col, row = (n - 1) % 2, math.floor((n - 1) / 2)
-            draw(ingredientName(id) .. " " .. (counts[id] or 0) .. "/" .. used[id], 12 + col * 195, 100 + row * 20, 0.74, white)
-        end
-        local stale = self.storage:GetRevision(pending.player) ~= pending.revision
-        draw(stale and "ESTOQUE ALTERADO" or pending.valid and "RECEITA VALIDA" or (pending.reason or "INDISPONIVEL"), 12, 196, 0.8, gold)
-        draw("Enter confirmar    Esc cancelar", 12, 220, 0.8, white)
-        return
-    end
     if self.inventoryView then
         draw("ESTOQUE - setas para rolar", 12, 57, 0.9, gold)
         local ids = self.inventoryIds or {}
@@ -376,6 +337,17 @@ function UI:Render()
             draw((index == self.selected and "> " or "  ") .. shortName(item.name, 38) .. "  [Q" .. tostring(item.quality) .. "]", 36, rowY, 0.78, index == self.selected and gold or white)
         end
     end
+    if #list > 8 then
+        local height, top = 112, 96
+        local thumbHeight = height * 8 / #list
+        local thumbTop = top + (height - thumbHeight) * (start - 1) / (#list - 8)
+        local function rect(left, upper, width, rectHeight, color)
+            Isaac.DrawQuad(Vector(x + left*s, y + upper*s), Vector(x + (left+width)*s, y + upper*s),
+                Vector(x + left*s, y + (upper+rectHeight)*s), Vector(x + (left+width)*s, y + (upper+rectHeight)*s), color, 1)
+        end
+        rect(403, top, 3, height, KColor(0.3, 0.24, 0.19, 1))
+        rect(403, thumbTop, 3, thumbHeight, gold)
+    end
     local selected = list[self.selected]
     if selected then
         draw("RECEITA: " .. shortName(selected.name, 35) .. "  (" .. (selected.available and "liberado" or "bloqueado") .. ")", 12, 210, 0.78, gold)
@@ -386,7 +358,7 @@ function UI:Render()
             draw(ingredientName(id) .. " x" .. used[id], 12 + ((n - 1) % 4) * 98, 225 + math.floor((n - 1) / 4) * 11, 0.62, white)
         end
     elseif #list == 0 then draw(self.storage:Count(player) < 8 and "Ingredientes insuficientes (minimo 8)" or "Nenhum item encontrado", 12, 103, 0.8, white) end
-    if self.message and Isaac.GetTime() < self.messageUntil then draw(self.message, 210, 68, 0.7, gold) end
+    if self.message and Isaac.GetTime() < self.messageUntil then draw(self.message, 210, 8, 0.62, gold) end
 end
 
 return UI
