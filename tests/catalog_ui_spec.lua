@@ -14,6 +14,7 @@ EntityPlayer = {CalculateBagOfCraftingOutput=function(recipe)
     return 123+n, 1
 end}
 local player = {ControllerIndex=0, GetPlayerIndex=function() return 0 end, ToPlayer=function(self) return self end}
+function GetPtrHash(p) return p.identity or p end
 function Game() return {GetNumPlayers=function() return 1 end, IsPaused=function() return paused end,
     GetSeeds=function() return {GetStartSeed=function() return 42 end} end} end
 function KColor(...) return {...} end
@@ -21,7 +22,7 @@ function Vector(...) return {...} end
 function Font() return {Load=function() end, DrawString=function() end, DrawStringScaledUTF8=function() end} end
 function Sprite() return {Load=function() end, ReplaceSpritesheet=function() end, LoadGraphics=function() end,
     SetFrame=function() end, RenderLayer=function() end} end
-Isaac = {DebugString=function() end, GetPlayer=function() return player end, GetTime=function() return now end, GetScreenWidth=function() return 442 end,
+Isaac = {DebugString=function() end, GetPlayer=function() return setmetatable({identity=player}, {__index=player}) end, GetTime=function() return now end, GetScreenWidth=function() return 442 end,
     GetScreenHeight=function() return 286 end, DrawQuad=function() end,
     GetItemConfig=function() return {GetCollectible=function(_,id) return {Name="Test Item "..id,Quality=2,
         GfxFileName="gfx/test.png",IsAvailable=function() return true end} end} end}

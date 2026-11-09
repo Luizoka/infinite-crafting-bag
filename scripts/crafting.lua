@@ -12,7 +12,7 @@ function Crafting.new(storage)
 end
 
 function Crafting:Observe(id, player)
-    if self.attempt and player == self.attempt.player then
+    if self.attempt and player and GetPtrHash(player) == self.attempt.playerHash then
         self.attempt.observed = id
     end
 end
@@ -23,7 +23,7 @@ function Crafting:Validate(player, item, expectedRevision)
         if not player:Exists() or player:IsDead() then return nil, "Jogador indisponivel" end
         local found = false
         for i = 0, Game():GetNumPlayers() - 1 do
-            if Isaac.GetPlayer(i) == player then found = true; break end
+            if GetPtrHash(Isaac.GetPlayer(i)) == GetPtrHash(player) then found = true; break end
         end
         if not found then return nil, "Jogador indisponivel" end
         if self.storage.preserveSavedData or self.storage.runSeed == nil then return nil, "Save indisponivel" end
@@ -72,7 +72,7 @@ function Crafting:Execute(player, item, revision)
             self.storage:RollbackRecipe(transaction)
             return false, "Falha ao salvar; nada entregue"
         end
-        self.attempt = {player = player}
+        self.attempt = {playerHash = GetPtrHash(player)}
         local delivered, failure = pcall(function()
             player:AddCollectible(item.id, 0, true, slot, 0, pool)
         end)

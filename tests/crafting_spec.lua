@@ -12,7 +12,10 @@ local raw
 local mod={HasData=function() return raw ~= nil end, SaveData=function(_,s) raw=s end, LoadData=function() return raw end}
 local players={}
 local config={Type=1, IsAvailable=function() return true end}
-Isaac={DebugString=function() end, GetPlayer=function(i) return players[i+1] end,
+-- Isaac can return distinct Lua wrappers for the same underlying entity.
+function GetPtrHash(p) return p.identity or p end
+local function wrapper(p) return p and setmetatable({identity=p}, {__index=p}) end
+Isaac={DebugString=function() end, GetPlayer=function(i) return wrapper(players[i+1]) end,
     GetItemConfig=function() return {GetCollectible=function() return config end} end}
 function Game() return {GetNumPlayers=function() return #players end, GetFrameCount=function() return 0 end,
     GetSeeds=function() return {GetStartSeed=function() return 42 end} end} end
@@ -30,7 +33,7 @@ local function player(index)
     function p:HasCollectible() return true end
     function p:CanAddCollectibleToInventory() return true end
     function p:GetActiveItem() return self.active or 0 end
-    function p:AddCollectible(id) self.given[#self.given+1]=id; crafting:Observe(id,self) end
+    function p:AddCollectible(id) self.given[#self.given+1]=id; crafting:Observe(id,wrapper(self.identity or self)) end
     return p
 end
 local p, other=player(0), player(1); players={p,other}
@@ -38,7 +41,7 @@ local recipe={1,1,1,1,2,2,2,2}
 local item={id=101,recipe=recipe}
 local function execute(who, target, rev) return crafting:Execute(who,target or item,rev or storage:GetRevision(who)) end
 storage:Add(p,recipe); storage:Add(other,recipe)
-assert(execute(p)); assert(storage:Count(p)==0 and #p.given==1 and storage:Count(other)==8)
+assert(execute(wrapper(p))); assert(storage:Count(p)==0 and #p.given==1 and storage:Count(other)==8)
 assert(raw and savedPayload.players['0'] and #savedPayload.players['0'].ingredients==0)
 storage:OnGameStarted(true); assert(storage:Count(p)==0 and storage:Count(other)==8, 'restore consumed stock')
 storage:Add(p,{1,1,1,1,2,2,2,2,3,3,3,3,3,3,3,3})

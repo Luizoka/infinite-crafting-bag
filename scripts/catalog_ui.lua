@@ -188,7 +188,8 @@ function UI:HandleInput()
             local pending = self.pending
             self.pending = nil
             local success, message
-            if self:GetPlayer() ~= pending.player then
+            local currentPlayer = self:GetPlayer()
+            if not currentPlayer or GetPtrHash(currentPlayer) ~= GetPtrHash(pending.player) then
                 success, message = false, "Jogador alterado"
             else
                 success, message = self.crafting:Execute(pending.player, pending.item, pending.revision)
