@@ -1,5 +1,6 @@
 local Catalog = include("scripts/catalog")
-local UI = { open = false, playerNumber = 0, epoch = 0, query = "", editing = false,
+local InputState = include("scripts/catalog_input")
+local UI = { open = false, focus = "closed", playerNumber = 0, epoch = 0, query = "", editing = false,
     availability = "all", quality = -1, selected = 1, inventoryView = false, inventoryOffset = 0 }
 
 local ingredientNames = {
@@ -45,7 +46,14 @@ function UI:Init(mod, storage)
         return id, pool
     end, describe)
     self.icons, self.iconCount = {}, 0
+    local keys = {Keyboard.KEY_I, Keyboard.KEY_ENTER, Keyboard.KEY_ESCAPE, Keyboard.KEY_TAB,
+        Keyboard.KEY_P, Keyboard.KEY_F, Keyboard.KEY_Q, Keyboard.KEY_UP, Keyboard.KEY_DOWN,
+        Keyboard.KEY_PAGE_UP, Keyboard.KEY_PAGE_DOWN, Keyboard.KEY_BACKSPACE, Keyboard.KEY_SPACE}
+    for code = string.byte("A"), string.byte("Z") do keys[#keys + 1] = code end
+    for code = string.byte("0"), string.byte("9") do keys[#keys + 1] = code end
+    self.input = InputState.new(keys, {[Keyboard.KEY_UP] = true, [Keyboard.KEY_DOWN] = true})
     mod:AddCallback(ModCallbacks.MC_POST_UPDATE, function() self:Update() end)
+    mod:AddCallback(ModCallbacks.MC_POST_RENDER, function() self:HandleInput() end)
     mod:AddCallback(ModCallbacks.MC_POST_HUD_RENDER, function() self:Render() end)
     mod:AddCallback(ModCallbacks.MC_POST_NEW_ROOM, function() self.epoch = self.epoch + 1 end)
     mod:AddCallback(ModCallbacks.MC_POST_ADD_COLLECTIBLE, function() self.epoch = self.epoch + 1 end)
@@ -53,7 +61,8 @@ function UI:Init(mod, storage)
     mod:AddCallback(ModCallbacks.MC_POST_GET_COLLECTIBLE, function(_, _, _, decrease)
         if decrease and not self.calculating then self.epoch = self.epoch + 1 end
     end)
-    mod:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function() self.open = false; self.editing = false; self.epoch = self.epoch + 1 end)
+    mod:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function() self:SetFocus("closed"); self.epoch = self.epoch + 1 end)
+    mod:AddCallback(ModCallbacks.MC_PRE_GAME_EXIT, function() self:SetFocus("closed") end)
     mod:AddCallback(ModCallbacks.MC_INPUT_ACTION, function(_, entity, hook, action)
         -- Keyboard navigation belongs to controller zero; do not suppress other players.
         if not self.open then return end
@@ -80,45 +89,123 @@ function UI:GetPlayer()
     return Isaac.GetPlayer(self.playerNumber)
 end
 
-local function pressed(key) return key ~= nil and Input.IsButtonTriggered(key, 0) end
+function UI:SetFocus(focus)
+    if self.focus == focus then return end
+    self.focus = focus
+    self.open = focus ~= "closed"
+    self.editing = focus == "search"
+    self.inventoryView = focus == "inventory"
+    if self.input then self.input:SuppressHeld() end
+    if focus == "closed" then
+        self.query, self.searchBefore = "", nil
+        self.availability, self.quality = "all", -1
+        self.selected, self.inventoryOffset = 1, 0
+        self.list, self.listKey = nil, nil
+    end
+end
 
-function UI:Update()
-    if not self.storage.initialized then self.open = false; self.editing = false; return end
-    if self.editing then
-        if pressed(Keyboard.KEY_ENTER) or pressed(Keyboard.KEY_ESCAPE) then self.editing = false; return end
-        if pressed(Keyboard.KEY_BACKSPACE) then self.query = self.query:sub(1, -2) end
-        if #self.query < 32 then
+function UI:FilteredList()
+    local c = self.catalog
+    local listKey = table.concat({c.version, self.query, self.availability, self.quality}, "|")
+    if self.listKey ~= listKey then
+        local oldItem = self.list and self.list[self.selected]
+        local quality = self.quality >= 0 and self.quality or nil
+        self.list = c:Filter(self.query, self.availability, quality)
+        self.listKey = listKey
+        if oldItem then
+            for i, item in ipairs(self.list) do
+                if item.id == oldItem.id then self.selected = i; break end
+            end
+        end
+    end
+    self.selected = math.max(1, math.min(self.selected, #self.list))
+    return self.list
+end
+
+function UI:ResetListSelection()
+    self.list, self.listKey, self.selected = nil, nil, 1
+end
+
+function UI:HandleInput()
+    local enabled = self.storage.initialized and not Game():IsPaused()
+    local event = self.input:Poll(Isaac.GetTime(), enabled)
+    if not enabled then
+        if not self.storage.initialized then self:SetFocus("closed") end
+        return
+    end
+    if self.focus == "search" then
+        if event[Keyboard.KEY_ENTER] then
+            self.searchBefore = nil
+            self:SetFocus("results")
+        elseif event[Keyboard.KEY_ESCAPE] then
+            self.query = self.searchBefore or ""
+            self.searchBefore = nil
+            self:ResetListSelection()
+            self:SetFocus("results")
+        elseif event[Keyboard.KEY_BACKSPACE] then
+            self.query = self.query:sub(1, -2)
+            self:ResetListSelection()
+        elseif #self.query < 32 then
             for code = string.byte("A"), string.byte("Z") do
-                if pressed(code) then self.query = self.query .. string.char(code + 32) end
+                if event[code] then
+                    self.query = self.query .. string.char(code + 32)
+                    self:ResetListSelection()
+                    return
+                end
             end
             for code = string.byte("0"), string.byte("9") do
-                if pressed(code) then self.query = self.query .. string.char(code) end
+                if event[code] then
+                    self.query = self.query .. string.char(code)
+                    self:ResetListSelection()
+                    return
+                end
             end
-            if pressed(Keyboard.KEY_SPACE) then self.query = self.query .. " " end
+            if event[Keyboard.KEY_SPACE] then
+                self.query = self.query .. " "
+                self:ResetListSelection()
+            end
         end
-    elseif pressed(Keyboard.KEY_I) then
-        self.open = not self.open
-    elseif self.open then
-        if pressed(Keyboard.KEY_ESCAPE) then self.open = false end
-        if pressed(Keyboard.KEY_ENTER) then self.editing = true end
-        if pressed(Keyboard.KEY_TAB) then self.inventoryView = not self.inventoryView end
-        if pressed(Keyboard.KEY_P) then self.playerNumber = self.playerNumber + 1; self.lastSnapshot = nil; self.selected = 1 end
-        if pressed(Keyboard.KEY_F) then
-            self.availability = self.availability == "all" and "available" or self.availability == "available" and "locked" or "all"
-            self.selected = 1
-        end
-        if pressed(Keyboard.KEY_Q) then self.quality = (self.quality + 2) % 6 - 1; self.selected = 1 end
-        if pressed(Keyboard.KEY_UP) then
-            if self.inventoryView then self.inventoryOffset = math.max(0, self.inventoryOffset - 2)
-            else self.selected = math.max(1, self.selected - 1) end
-        end
-        if pressed(Keyboard.KEY_DOWN) then
-            if self.inventoryView then self.inventoryOffset = self.inventoryOffset + 2
-            else self.selected = self.selected + 1 end
-        end
-        if pressed(Keyboard.KEY_PAGE_UP) then self.selected = math.max(1, self.selected - 8) end
-        if pressed(Keyboard.KEY_PAGE_DOWN) then self.selected = self.selected + 8 end
+        return
     end
+    if event[Keyboard.KEY_I] then
+        self:SetFocus(self.open and "closed" or "results")
+    elseif not self.open then
+        return
+    elseif event[Keyboard.KEY_ESCAPE] then
+        self:SetFocus("closed")
+    elseif event[Keyboard.KEY_TAB] then
+        self:SetFocus(self.inventoryView and "results" or "inventory")
+    elseif event[Keyboard.KEY_P] then
+        self.playerNumber = self.playerNumber + 1
+        self.lastSnapshot = nil
+        self:ResetListSelection()
+    elseif self.focus == "results" and event[Keyboard.KEY_ENTER] then
+        self.searchBefore = self.query
+        self:SetFocus("search")
+    elseif self.focus == "results" and event[Keyboard.KEY_F] then
+        self.availability = self.availability == "all" and "available" or self.availability == "available" and "locked" or "all"
+        self:ResetListSelection()
+    elseif self.focus == "results" and event[Keyboard.KEY_Q] then
+        self.quality = (self.quality + 2) % 6 - 1
+        self:ResetListSelection()
+    elseif event[Keyboard.KEY_UP] then
+        if self.inventoryView then self.inventoryOffset = math.max(0, self.inventoryOffset - 2)
+        else self.selected = math.max(1, self.selected - 1) end
+    elseif event[Keyboard.KEY_DOWN] then
+        if self.inventoryView then
+            self.inventoryOffset = math.min(math.max(0, #(self.inventoryIds or {}) - 16), self.inventoryOffset + 2)
+        else
+            self.selected = math.min(math.max(1, #self:FilteredList()), self.selected + 1)
+        end
+    elseif self.focus == "results" and event[Keyboard.KEY_PAGE_UP] then
+        self.selected = math.max(1, self.selected - 8)
+    elseif self.focus == "results" and event[Keyboard.KEY_PAGE_DOWN] then
+        self.selected = math.min(math.max(1, #self:FilteredList()), self.selected + 8)
+    end
+end
+
+function UI:Update()
+    if not self.storage.initialized then self:SetFocus("closed"); return end
     if not self.open then return end
     local player = self:GetPlayer()
     if not player then return end
@@ -127,12 +214,15 @@ function UI:Update()
     local snapshot = tostring(player:GetPlayerIndex()) .. ":" .. revision .. ":" .. tostring(seed) .. ":" .. tostring(self.epoch)
     if snapshot ~= self.lastSnapshot then
         self.counts = self.storage:CountsByType(player)
+        self.inventoryIds = {}
+        for id in pairs(self.counts) do self.inventoryIds[#self.inventoryIds + 1] = id end
+        table.sort(self.inventoryIds)
         self.catalog:Refresh(self.counts, snapshot)
         self.lastSnapshot = snapshot
         self.inventoryOffset = 0
-        self.selected = 1
+        self:ResetListSelection()
     end
-    self.catalog:Step(256, 16)
+    self.catalog:Step(128, 8)
 end
 
 function UI:Draw(text, x, y, size, color)
@@ -182,9 +272,7 @@ function UI:Render()
     draw("Setas: navegar   PgUp/PgDn: paginas", 12, 247, 0.68, white)
     if self.inventoryView then
         draw("ESTOQUE - setas para rolar", 12, 57, 0.9, gold)
-        local ids = {}
-        for id in pairs(self.counts or {}) do ids[#ids + 1] = id end
-        table.sort(ids)
+        local ids = self.inventoryIds or {}
         self.inventoryOffset = math.min(self.inventoryOffset, math.max(0, #ids - 16))
         for n = 1, 16 do
             local id = ids[self.inventoryOffset + n]
@@ -196,14 +284,7 @@ function UI:Render()
         return
     end
     local c = self.catalog
-    local listKey = table.concat({c.version, self.query, self.availability, self.quality}, "|")
-    if self.listKey ~= listKey then
-        local quality = self.quality >= 0 and self.quality or nil
-        self.list = c:Filter(self.query, self.availability, quality)
-        self.listKey = listKey
-    end
-    local list = self.list or {}
-    self.selected = math.max(1, math.min(self.selected, #list))
+    local list = self:FilteredList()
     local av = self.availability == "all" and "todos" or self.availability == "available" and "liberados" or "bloqueados"
     draw("Busca: " .. self.query .. (self.editing and "_" or ""), 12, 55, 0.78, gold)
     draw("F: " .. av .. "  Q: " .. (self.quality < 0 and "todas" or tostring(self.quality)), 12, 68, 0.75, white)
