@@ -2,7 +2,7 @@ local Catalog = include("scripts/catalog")
 local InputState = include("scripts/catalog_input")
 local Crafting = include("scripts/crafting")
 local UI = { open = false, focus = "closed", playerNumber = 0, epoch = 0, query = "", editing = false,
-    availability = "all", quality = -1, selected = 1, inventoryView = false, inventoryOffset = 0 }
+    availability = "available", quality = -1, selected = 1, inventoryView = false, inventoryOffset = 0 }
 
 local ingredientNames = {
     "Coracao vermelho", "Coracao de alma", "Coracao negro", "Coracao eterno", "Coracao dourado",
@@ -32,7 +32,9 @@ local function describe(id)
             name = name:sub(2):gsub("_NAME$", ""):gsub("_", " ")
         end
     end
-    return { name = name, quality = config.Quality, available = config:IsAvailable(), gfx = config.GfxFileName }
+    local achievement = config.AchievementID
+    local unlocked = achievement == -1 or Isaac.GetPersistentGameData():Unlocked(achievement)
+    return { name = name, quality = config.Quality, available = unlocked, gfx = config.GfxFileName }
 end
 
 function UI:Init(mod, storage)
@@ -47,7 +49,7 @@ function UI:Init(mod, storage)
         if not ok then error(id) end
         return id, pool
     end, describe)
-    self.icons, self.iconCount = {}, 0
+    self.icons, self.iconOffsets, self.iconCount = {}, {}, 0
     local keys = {Keyboard.KEY_I, Keyboard.KEY_ENTER, Keyboard.KEY_ESCAPE, Keyboard.KEY_TAB,
         Keyboard.KEY_P, Keyboard.KEY_R, Keyboard.KEY_Q, Keyboard.KEY_UP, Keyboard.KEY_DOWN,
         Keyboard.KEY_PAGE_UP, Keyboard.KEY_PAGE_DOWN, Keyboard.KEY_BACKSPACE, Keyboard.KEY_SPACE}
@@ -104,7 +106,7 @@ function UI:SetFocus(focus)
     if focus == "closed" then
         self.pending, self.message, self.preferredId = nil, nil, nil
         self.query, self.searchBefore = "", nil
-        self.availability, self.quality = "all", -1
+        self.availability, self.quality = "available", -1
         self.selected, self.inventoryOffset = 1, 0
         self.list, self.listKey = nil, nil
     end
@@ -227,7 +229,7 @@ function UI:HandleInput()
         self.searchBefore = self.query
         self:SetFocus("search")
     elseif self.focus == "results" and event[Keyboard.KEY_R] then
-        self.availability = self.availability == "all" and "available" or self.availability == "available" and "locked" or "all"
+        self.availability = self.availability == "available" and "all" or self.availability == "all" and "locked" or "available"
         self:ResetListSelection()
     elseif self.focus == "results" and event[Keyboard.KEY_Q] then
         self.quality = (self.quality + 2) % 6 - 1
@@ -273,11 +275,11 @@ function UI:Draw(text, x, y, size, color)
     self.font:DrawStringScaledUTF8(tostring(text), x, y, size, size, color or KColor(1, 1, 1, 1), 0, true)
 end
 
-function UI:Icon(item, x, y, scale)
+function UI:Icon(item, x, y, scale, centerFrame)
     if not item.gfx or item.gfx == "" then return end
     local sprite = self.icons[item.id]
     if sprite == nil then
-        if self.iconCount >= 64 then self.icons, self.iconCount = {}, 0 end
+        if self.iconCount >= 64 then self.icons, self.iconOffsets, self.iconCount = {}, {}, 0 end
         local ok, created = pcall(function()
             local s = Sprite()
             s:Load("gfx/005.100_collectible.anm2", false)
@@ -288,11 +290,23 @@ function UI:Icon(item, x, y, scale)
         end)
         sprite = ok and created or false
         self.icons[item.id] = sprite
+        if sprite then
+            -- The collectible animation positions its layer above its origin.
+            -- Account for its frame bounds and pivot before applying UI scale.
+            local measured, offset = pcall(function()
+                local frame = sprite:GetLayerFrameData(1)
+                local layer = sprite:GetLayer(1)
+                return layer:GetPos().Y + frame:GetPos().Y
+                    + (frame:GetHeight() / 2 - frame:GetPivot().Y) * frame:GetScale().Y
+            end)
+            self.iconOffsets[item.id] = measured and offset or 0
+        end
         self.iconCount = self.iconCount + 1
     end
     if sprite then
         sprite.Scale = Vector(scale * 0.38, scale * 0.38)
-        sprite:RenderLayer(1, Vector(x, y))
+        local offset = centerFrame and self.iconOffsets[item.id] * scale * 0.38 or 0
+        sprite:RenderLayer(1, Vector(x, y - offset))
     end
 end
 
@@ -345,9 +359,9 @@ function UI:Render()
     end
     local c = self.catalog
     local list = self:FilteredList()
-    local av = self.availability == "all" and "todos" or self.availability == "available" and "liberados" or "bloqueados"
+    local av = self.availability == "all" and "Todos" or self.availability == "available" and "Desbloqueados" or "Bloqueados"
     draw("Busca: " .. self.query .. (self.editing and "_" or ""), 12, 55, 0.78, gold)
-    draw("R: " .. av .. "  Q: " .. (self.quality < 0 and "todas" or tostring(self.quality)), 12, 68, 0.75, white)
+    draw("R desbloqueio: " .. av .. "  Q: " .. (self.quality < 0 and "todas" or tostring(self.quality)), 12, 68, 0.75, white)
     local status = c.state == "working" and "BUSCA EM ANDAMENTO" or c.state == "limited" and "LIMITE - BUSCA INCOMPLETA"
         or c.state == "error" and "ERRO - BUSCA INCOMPLETA" or "BUSCA COMPLETA"
     draw(status .. "  " .. (c.evaluated or 0) .. "/" .. (c.total or 0), 12, 81, 0.75, gold)
@@ -357,8 +371,8 @@ function UI:Render()
         local index = start + row
         local item = list[index]
         if item then
-            local rowY = 96 + row * 14
-            self:Icon(item, x + 24*s, y + (rowY+5)*s, s)
+            local rowHeight, rowY = 14, 96 + row * 14
+            self:Icon(item, x + 24*s, y + (rowY + rowHeight / 2)*s, s, true)
             draw((index == self.selected and "> " or "  ") .. shortName(item.name, 38) .. "  [Q" .. tostring(item.quality) .. "]", 36, rowY, 0.78, index == self.selected and gold or white)
         end
     end
