@@ -6,7 +6,67 @@ local function log(message)
 end
 
 function Crafting.new(storage)
-    return setmetatable({storage = storage, busy = false}, Crafting)
+    return setmetatable({storage = storage, busy = false, duration = 1200}, Crafting)
+end
+
+function Crafting:Reset()
+    self.prepared, self.started, self.armed, self.blockUntilRelease = nil, nil, false, false
+    self.message, self.messageUntil = nil, nil
+end
+
+function Crafting:Prepare(player, item)
+    local valid, reason = self:Validate(player, item, self.storage:GetRevision(player))
+    if not valid then return false, reason end
+    local recipe = {}; for i, id in ipairs(item.recipe) do recipe[i] = id end
+    self.prepared = {hash = GetPtrHash(player), item = {id = item.id, name = item.name, recipe = recipe}}
+    self.started, self.armed = nil, false
+    return true, "Receita pronta: feche e segure Q"
+end
+
+function Crafting:Observe(id, player)
+    if self.attempt and player and GetPtrHash(player) == self.attempt.hash then
+        self.attempt.observed = id
+    end
+end
+
+function Crafting:FindPlayer()
+    if not self.prepared then return nil end
+    for i = 0, Game():GetNumPlayers() - 1 do
+        local player = Isaac.GetPlayer(i)
+        if player and GetPtrHash(player) == self.prepared.hash then return player end
+    end
+end
+
+function Crafting:ShouldBlock(entity, down)
+    if not down or not (self.prepared or self.blockUntilRelease) then return false end
+    if not entity then return true end
+    local player = entity:ToPlayer()
+    return player and player.ControllerIndex == 0
+end
+
+function Crafting:Tick(open, down, now)
+    if not down then self.blockUntilRelease = false end
+    if not self.prepared then self.started = nil; return end
+    if open or Game():IsPaused() or not self.storage.initialized then
+        self.started, self.armed = nil, false
+        return
+    end
+    if not down then self.started, self.armed = nil, true; return end
+    if not self.armed then return end
+    self.started = self.started or now
+    if now - self.started < self.duration then return end
+    self.blockUntilRelease = true
+    self.armed, self.started = false, nil
+    local player, item = self:FindPlayer(), self.prepared.item
+    self.prepared = nil
+    local ok, message = self:Execute(player, item)
+    self.message, self.messageUntil = message, now + 4000
+    return ok, message
+end
+
+function Crafting:Progress(now)
+    if not self.started then return 0 end
+    return math.min(1, math.max(0, (now - self.started) / self.duration))
 end
 
 function Crafting:Validate(player, item, expectedRevision)
@@ -48,6 +108,38 @@ function Crafting:Validate(player, item, expectedRevision)
     if not ok then log("validacao falhou: " .. tostring(result)); return false, "Erro de validacao" end
     if not result then return false, pool end
     return true, pool, slot
+end
+
+function Crafting:Execute(player, item)
+    if self.busy then return false, "Fabricacao em andamento" end
+    self.busy = true
+    local ok, success, message = pcall(function()
+        if not player then return false, "Jogador indisponivel" end
+        local valid, pool, slot = self:Validate(player, item, self.storage:GetRevision(player))
+        if not valid then return false, pool end
+        -- Never compete with a native bag that already contains ingredients.
+        for _, id in ipairs(player:GetBagOfCraftingContent()) do
+            if id ~= 0 then return false, "Bolsa nativa ocupada" end
+        end
+        local transaction, err = self.storage:ConsumeRecipe(player, item.recipe)
+        if not transaction then return false, err end
+        local saved, result = pcall(self.storage.Save, self.storage, "craft debit", true)
+        if not saved or not result then
+            self.storage:RollbackRecipe(transaction)
+            return false, "Falha ao salvar; nada entregue"
+        end
+        self.attempt = {hash = GetPtrHash(player)}
+        local delivered, failure = pcall(function() player:AddCollectible(item.id, 0, true, slot, 0, pool) end)
+        local observed = self.attempt.observed
+        self.attempt = nil
+        if delivered and observed == item.id then return true, "Item fabricado!" end
+        log("entrega incerta; item=" .. tostring(item.id) .. " observado=" .. tostring(observed) .. " erro=" .. tostring(failure))
+        return false, "Entrega incerta; consulte o log"
+    end)
+    self.attempt, self.busy = nil, false
+    if not ok then log("erro inesperado: " .. tostring(success)); return false, "Erro; consulte o log" end
+    if not success then log(message) end
+    return success, message
 end
 
 return Crafting

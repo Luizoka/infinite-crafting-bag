@@ -60,16 +60,21 @@ function UI:Init(mod, storage)
     mod:AddCallback(ModCallbacks.MC_POST_RENDER, function() self:HandleInput() end)
     mod:AddCallback(ModCallbacks.MC_POST_HUD_RENDER, function() self:Render() end)
     mod:AddCallback(ModCallbacks.MC_POST_NEW_ROOM, function() self.epoch = self.epoch + 1 end)
-    mod:AddCallback(ModCallbacks.MC_POST_ADD_COLLECTIBLE, function()
+    mod:AddCallback(ModCallbacks.MC_POST_ADD_COLLECTIBLE, function(_, id, _, _, _, _, player)
         self.epoch = self.epoch + 1
+        self.crafting:Observe(id, player)
     end)
     mod:AddCallback(ModCallbacks.MC_POST_ACHIEVEMENT_UNLOCK, function() self.epoch = self.epoch + 1 end)
     mod:AddCallback(ModCallbacks.MC_POST_GET_COLLECTIBLE, function(_, _, _, decrease)
         if decrease and not self.calculating then self.epoch = self.epoch + 1 end
     end)
-    mod:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function() self:SetFocus("closed"); self.epoch = self.epoch + 1 end)
-    mod:AddCallback(ModCallbacks.MC_PRE_GAME_EXIT, function() self:SetFocus("closed") end)
+    mod:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function() self.crafting:Reset(); self:SetFocus("closed"); self.epoch = self.epoch + 1 end)
+    mod:AddCallback(ModCallbacks.MC_PRE_GAME_EXIT, function() self.crafting:Reset(); self:SetFocus("closed") end)
     mod:AddCallback(ModCallbacks.MC_INPUT_ACTION, function(_, entity, hook, action)
+        if action == ButtonAction.ACTION_DROP and self.crafting:ShouldBlock(entity, Input.IsButtonPressed(Keyboard.KEY_Q, 0)) then
+            if hook == InputHook.GET_ACTION_VALUE then return 0 end
+            return false
+        end
         -- Keyboard navigation belongs to controller zero; do not suppress other players.
         if not self.open then return end
         if not entity then
@@ -143,6 +148,7 @@ end
 function UI:HandleInput()
     local enabled = self.storage.initialized and not Game():IsPaused()
     local event = self.input:Poll(Isaac.GetTime(), enabled)
+    self.crafting:Tick(self.open, Input.IsButtonPressed(Keyboard.KEY_Q, 0), Isaac.GetTime())
     if not enabled then
         if not self.storage.initialized then self:SetFocus("closed") end
         return
@@ -197,9 +203,8 @@ function UI:HandleInput()
         local item = self:FilteredList()[self.selected]
         local player = self:GetPlayer()
         if item and player then
-            local revision = self.storage:GetRevision(player)
-            local valid, reason = self.crafting:Validate(player, item, revision)
-            self.message = valid and "Q indisponivel: receita nao carregada" or reason
+            local valid, reason = self.crafting:Prepare(player, item)
+            self.message = reason
             self.messageUntil = Isaac.GetTime() + 4000
         end
     elseif self.focus == "results" and event[Keyboard.KEY_S] then
@@ -293,6 +298,17 @@ function UI:Render()
     if not player then return end
     if not self.open then
         self.font:DrawString("Infinite Crafting Bag: " .. self.storage:Count(player) .. " ingredientes (I)", 12, 42, KColor(1, 1, 1, 1), 0, true)
+        local c = self.crafting
+        if c.prepared then
+            self.font:DrawString("Segure Q: " .. shortName(c.prepared.item.name, 25), 12, 53, KColor(1, 1, 1, 1), 0, true)
+            local progress = c:Progress(Isaac.GetTime())
+            if progress > 0 then
+                local color = KColor(1, 0.84, 0.52, 1)
+                Isaac.DrawQuad(Vector(12,65), Vector(12+100*progress,65), Vector(12,68), Vector(12+100*progress,68), color, 1)
+            end
+        elseif c.message and Isaac.GetTime() < c.messageUntil then
+            self.font:DrawString(c.message, 12, 53, KColor(1, 1, 1, 1), 0, true)
+        end
         return
     end
     local w, h = Isaac.GetScreenWidth(), Isaac.GetScreenHeight()
@@ -328,13 +344,16 @@ function UI:Render()
     draw(status .. "  " .. (c.evaluated or 0) .. "/" .. (c.total or 0), 12, 81, 0.75, gold)
     local start = math.max(1, self.selected - 5)
     start = math.min(start, math.max(1, #list - 7))
+    local textRight = 36
     for row = 0, 7 do
         local index = start + row
         local item = list[index]
         if item then
             local rowHeight, rowY = 14, 96 + row * 14
             self:Icon(item, x + 24*s, y + (rowY + rowHeight / 2)*s, s, true)
-            draw((index == self.selected and "> " or "  ") .. shortName(item.name, 38) .. "  [Q" .. tostring(item.quality) .. "]", 36, rowY, 0.78, index == self.selected and gold or white)
+            local label = (index == self.selected and "> " or "  ") .. shortName(item.name, 38) .. "  [Q" .. tostring(item.quality) .. "]"
+            textRight = math.max(textRight, 36 + self.font:GetStringWidthUTF8(label) * 0.78)
+            draw(label, 36, rowY, 0.78, index == self.selected and gold or white)
         end
     end
     if #list > 8 then
@@ -345,8 +364,9 @@ function UI:Render()
             Isaac.DrawQuad(Vector(x + left*s, y + upper*s), Vector(x + (left+width)*s, y + upper*s),
                 Vector(x + left*s, y + (upper+rectHeight)*s), Vector(x + (left+width)*s, y + (upper+rectHeight)*s), color, 1)
         end
-        rect(403, top, 3, height, KColor(0.3, 0.24, 0.19, 1))
-        rect(403, thumbTop, 3, thumbHeight, gold)
+        local barX = math.min(403, textRight + 6)
+        rect(barX, top, 3, height, KColor(0.3, 0.24, 0.19, 1))
+        rect(barX, thumbTop, 3, thumbHeight, gold)
     end
     local selected = list[self.selected]
     if selected then

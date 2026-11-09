@@ -1,12 +1,12 @@
 # Infinite Crafting Bag
 
-Mod for The Binding of Isaac: Repentance+ with REPENTOGON. The Bag of Crafting stores collected ingredients in a virtual per-player inventory. The catalog previews possible results. Crafting from the virtual inventory is currently unavailable.
+Mod for The Binding of Isaac: Repentance+ with REPENTOGON. The Bag of Crafting stores collected ingredients in a virtual per-player inventory. The catalog previews possible results and prepares a recipe for crafting by holding Q outside the catalog.
 
 ## Controls
 
 - **I** opens or closes the catalog. While editing the search, press Enter or Escape to finish editing first.
 - **S** edits the name search; type letters, numbers or spaces and use Backspace to delete. Enter confirms the search and Escape cancels the edit.
-- **Enter** on a catalog result revalidates its recipe and reports that native crafting is unavailable. It does not consume ingredients or grant an item.
+- **Enter** on a catalog result validates and prepares its recipe without consuming ingredients. Close the catalog and hold **Q** for 1.2 seconds to craft. Release early to cancel.
 - **Up/Down** selects an item or scrolls the ingredient inventory; holding an arrow repeats after a short delay. **Page Up/Page Down** move through the item list.
 - **R** cycles unlock filters (unlocked by default, all, locked). **Q** cycles quality filters (all, 0–4).
 - **Tab** switches between the item list and ingredient inventory. **P** selects the next player.
@@ -23,9 +23,9 @@ The native function calculates an output for one combination; it does not provid
 
 ## Crafting and limitations
 
-The mod does not place selected ingredients into the native bag or grant items from the catalog. The capture callback clears the native bag after a confirmed ingredient pickup. REPENTOGON documents callbacks for adding pickups to the bag, but no documented callback identified here proves that the native Bag of Crafting finished crafting a specific recipe. A cleared bag or a generic collectible callback alone is not proof. Loading eight virtual ingredients into the native bag without reliable confirmation would allow a free craft or incorrect debits, so the integration is disabled pending investigation and in-game verification.
+The mod does not load the native Bag of Crafting. REPENTOGON documents callbacks for adding pickups to the bag, but no documented callback identified here proves that the native bag finished crafting a specific recipe. The mod instead suppresses the player's drop action while Q is held for a prepared recipe and controls the hold and delivery itself. It refuses to craft if the native bag contains ingredients. The prepared recipe is temporary and must be selected again after Continue; the inventory remains persistent.
 
-Pressing Enter checks the player, stock and native recipe result but leaves the bag and inventory untouched. Holding Q after selecting a catalog result will not craft that item. The previous direct `AddCollectible` path has been removed. SaveData and the game state are separate operations and cannot guarantee atomic recovery across interruptions.
+Before delivery the mod checks the player, stock, unlock and native recipe output again, consumes eight ingredients and saves the resulting stock. It then calls `EntityPlayer:AddCollectible` once and observes `MC_POST_ADD_COLLECTIBLE`. A failed save before delivery rolls back the in-memory consumption. `AddCollectible` and SaveData do not form a transaction with the game's save. Other mods can cancel or change item delivery, override input callbacks, or have side effects; after the delivery call an uncertain outcome is logged and ingredients are not automatically refunded to avoid duplication. Item acquisition callbacks run, but the native Bag of Crafting animation and special crafting interactions are not reproduced. To avoid replacing an equipped active item, active collectibles require an empty primary active slot. These interactions require testing in Isaac.
 
 The installed `[RGON] (BETA) Tainted Cain Rework` implements its own crafting inventory and its own collectible delivery. The two crafting flows are independent; their joint behavior has not been validated and no integration is provided. Test this mod with the rework disabled first.
 
@@ -51,7 +51,8 @@ The tests mock the Isaac API and native calculator; they do not verify game rend
 1. Start or continue a Tainted Cain run, collect at least eight ingredients, and press **I**.
 2. Check the ingredient inventory with **Tab**, then return to the list. Verify the progress changes to complete or explicitly reports an incomplete search.
 3. Navigate the results and compare an eight-ingredient recipe and its output with the game's native Bag of Crafting behavior. Search for a displayed item and exercise both filters.
-4. Press Enter repeatedly on a result. Check that the message says native crafting is unavailable, the stock remains unchanged and no item is granted. Close the catalog with I.
-5. Save, exit and Continue; verify the remaining ingredients. Close the catalog and verify normal controls resume. Check the scroll indicator at the beginning and end of a filtered list and at smaller screen resolutions.
+4. Select an item with Enter. Check the stock does not change, close with I, hold Q briefly and release; verify nothing is consumed or granted.
+5. Hold Q for 1.2 seconds and watch the progress bar. Verify exactly eight ingredients are removed and one item is granted. Keep holding and confirm no second item appears.
+6. Select another recipe, craft it, save and Continue. Verify the remaining stock; prepare the recipe again after Continue. Check active items with an empty primary slot and test other mods separately.
 
-Native Q crafting from the virtual inventory is not available to test yet. The updated interface and these regressions still require validation in Isaac.
+Crafting, progress display, input suppression and persistence after crafting require validation in Isaac.

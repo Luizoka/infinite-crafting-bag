@@ -20,7 +20,7 @@ function Game() return {GetNumPlayers=function() return 1 end, IsPaused=function
     GetSeeds=function() return {GetStartSeed=function() return 42 end} end} end
 function KColor(...) return {...} end
 function Vector(...) return {...} end
-function Font() return {Load=function() end, DrawString=function() end, DrawStringScaledUTF8=function(_,text,x,y) texts[#texts+1]={text=text,y=y} end} end
+function Font() return {GetStringWidthUTF8=function(_,s) return #s*6 end, Load=function() end, DrawString=function() end, DrawStringScaledUTF8=function(_,text,x,y) texts[#texts+1]={text=text,y=y} end} end
 function Sprite() return {Load=function() end, ReplaceSpritesheet=function() end, LoadGraphics=function() end,
     SetFrame=function() end, RenderLayer=function(_,_,pos) icons[#icons+1]=pos end,
     GetLayer=function() return {GetPos=function() return {Y=0} end} end,
@@ -87,15 +87,15 @@ tick(2000); assert(ui.selected == 6, "stalled frame must not produce multiple st
 held[Keyboard.KEY_DOWN]=nil; tick()
 press(Keyboard.KEY_UP); assert(ui.selected == 5)
 checkAlignment()
-local validations=0
-ui.crafting.Validate=function() validations=validations+1; return true end
+local preparations=0
+ui.crafting.Prepare=function() preparations=preparations+1; return true, "Receita pronta" end
 ui.crafting.Execute=function() error("Enter must never invoke item delivery") end
 for _=1,3 do press(Keyboard.KEY_ENTER) end
-assert(ui.focus == "results" and validations == 3 and ui.message:find("indisponivel"))
+assert(ui.focus == "results" and preparations == 3 and ui.message == "Receita pronta")
 held[Keyboard.KEY_ENTER]=true; tick()
 for _=1,10 do tick() end
 held[Keyboard.KEY_ENTER]=nil; tick()
-assert(validations == 4 and storage:Count(player)==16, "Enter must not consume stock")
+assert(preparations == 4 and storage:Count(player)==16, "Enter must not consume stock")
 press(Keyboard.KEY_F); assert(ui.availability == "available", "F must not change the availability filter")
 assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,player,0,ButtonAction.ACTION_FULLSCREEN) == nil)
 assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,nil,0,ButtonAction.ACTION_FULLSCREEN) == nil)
@@ -120,6 +120,12 @@ assert(not ui.open, "holding toggle must not reopen catalog")
 held[Keyboard.KEY_I]=nil; tick()
 assert(ui.query == "" and ui.availability == "available" and ui.quality == -1 and ui.selected == 1)
 assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,player,0,0) == nil)
+ui.crafting.prepared={hash=player, item={name="Test"}}
+held[Keyboard.KEY_Q]=true
+assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,player,0,ButtonAction.ACTION_DROP)==false)
+assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,player,2,ButtonAction.ACTION_DROP)==0)
+held[Keyboard.KEY_Q]=nil
+ui.crafting.prepared=nil
 local oldCalls=nativeCalls
 press(Keyboard.KEY_I); assert(ui.open and nativeCalls == oldCalls, "reopen should reuse cache")
 counts={}; for id=1,15 do counts[id]=8 end; revision=2; tick()
