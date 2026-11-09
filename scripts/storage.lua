@@ -1,3 +1,4 @@
+local json = require("json")
 local Storage = { VERSION = 1, players = {}, initialized = false }
 
 local TEST_MARKER = { test = "persistencia", value = 12345 }
@@ -8,6 +9,7 @@ end
 
 local function summarize(players)
 	local parts = {}
+	if type(players) ~= "table" then return "(estrutura inválida)" end
 	for key, data in pairs(players or {}) do
 		local count = type(data) == "table" and type(data.ingredients) == "table" and #data.ingredients or 0
 		parts[#parts + 1] = tostring(key) .. "=" .. tostring(count)
@@ -17,11 +19,19 @@ local function summarize(players)
 end
 
 local function validPlayers(players)
-	for _, playerData in pairs(players) do
+	for key, playerData in pairs(players) do
+		if type(key) ~= "string" or not key:match("^%d+$") then return false end
 		if type(playerData) ~= "table" or type(playerData.ingredients) ~= "table" then return false end
-		for _, ingredientId in ipairs(playerData.ingredients) do
-			if type(ingredientId) ~= "number" or ingredientId <= 0 then return false end
+		local count, maxIndex = 0, 0
+		for index, ingredientId in pairs(playerData.ingredients) do
+			if type(index) ~= "number" or index < 1 or index % 1 ~= 0
+				or type(ingredientId) ~= "number" or ingredientId <= 0 or ingredientId % 1 ~= 0 then
+				return false
+			end
+			count = count + 1
+			maxIndex = math.max(maxIndex, index)
 		end
+		if count ~= maxIndex then return false end
 	end
 	return true
 end
@@ -38,7 +48,9 @@ local function gameFrame()
 end
 
 local function log(message)
-	print("[ICB DEBUG] " .. message)
+	local line = "[ICB DEBUG] " .. message
+	print(line)
+	Isaac.DebugString(line)
 end
 
 function Storage:Init(mod)
@@ -48,6 +60,7 @@ function Storage:Init(mod)
 	self.isContinued = nil
 	self.runSeed = nil
 	log("Storage:Init; memória zerada para inicialização, persistência não alterada")
+	log("JSON importado; encode=" .. type(json.encode) .. ", decode=" .. type(json.decode))
 end
 
 function Storage:GetPlayer(player)
@@ -93,7 +106,7 @@ function Storage:InspectSavedData(source)
 	log(source .. "; LoadData bytes=" .. #raw .. ", preview=" .. preview)
 	if raw == "" then return nil, "empty" end
 
-	local okDecode, data = pcall(function() return json.decode(raw) end)
+	local okDecode, data, nextPos = pcall(function() return json.decode(raw) end)
 	if not okDecode then
 		log(source .. "; JSON decode ERRO=" .. tostring(data))
 		return nil, "invalid-json"
@@ -102,29 +115,22 @@ function Storage:InspectSavedData(source)
 		log(source .. "; JSON decode=ok, raiz=" .. type(data))
 		return nil, "invalid-structure"
 	end
+	if type(nextPos) ~= "number" or not raw:sub(nextPos):match("^%s*$") then
+		log(source .. "; JSON inválido: conteúdo após o objeto; dados preservados")
+		return nil, "invalid-json"
+	end
 	local diagnostic = data.diagnostic
 	local diagText = type(diagnostic) == "table"
 		and (tostring(diagnostic.test) .. "/" .. tostring(diagnostic.value)) or "ausente"
 	log(source .. "; JSON decode=ok, version=" .. tostring(data.version)
 		.. ", jogadores=" .. summarize(data.players) .. ", diagnostic=" .. diagText
 		.. ", runSeed=" .. tostring(data.runSeed))
-	if data.version ~= self.VERSION or type(data.players) ~= "table" or not validPlayers(data.players) then
+	if data.version ~= self.VERSION or type(data.players) ~= "table" or not validPlayers(data.players)
+		or type(data.runSeed) ~= "number" or data.runSeed % 1 ~= 0 or data.runSeed < 0 then
+		log(source .. "; payload inválido ou sem seed válida; dados preservados")
 		return nil, "invalid-structure"
 	end
 	return data, "ok"
-end
-
-function Storage:OnSaveSlotLoaded(saveSlot, isSelected, rawSlot)
-	-- This callback also fires for internal/default slots and before a run exists.
-	-- Inspect for diagnostics only; it must never restore or reset the active run.
-	local source = "MC_POST_SAVESLOT_LOAD saveSlot=" .. tostring(saveSlot)
-		.. ", isSelected=" .. tostring(isSelected) .. ", rawSlot=" .. tostring(rawSlot)
-	if rawSlot == 0 then
-		log(source .. "; estado padrão/fora de sincronia; somente diagnóstico, não será restaurado")
-		self:InspectSavedData(source .. "; inspeção somente slot padrão")
-		return
-	end
-	self:InspectSavedData(source .. "; inspeção somente")
 end
 
 function Storage:OnGameStarted(isContinued)
@@ -138,7 +144,7 @@ function Storage:OnGameStarted(isContinued)
 	if isContinued then
 		local data, status = self:InspectSavedData("MC_POST_GAME_STARTED Continue")
 		if data then
-			if data.runSeed ~= nil and seed ~= nil and data.runSeed ~= seed then
+			if seed == nil or data.runSeed ~= seed then
 				log("Continue seed mismatch; estoque persistido preservado e não aplicado. saved="
 					.. tostring(data.runSeed) .. ", current=" .. tostring(seed))
 				self.players = {}
@@ -150,22 +156,29 @@ function Storage:OnGameStarted(isContinued)
 			end
 		else
 			self.players = {}
-			self.preserveSavedData = true
-			log("Continue sem payload válido (" .. tostring(status) .. "); estoque não será salvo vazio")
+			self.preserveSavedData = status ~= "missing"
+			log("Continue sem payload válido (" .. tostring(status) .. "); proteção=" .. tostring(self.preserveSavedData))
 		end
 	else
 		log("Estoque zerado em MC_POST_GAME_STARTED (partida nova), gameFrame=" .. gameFrame()
 			.. "; antes=" .. summarize(self.players))
 		self.players = {}
-		self.preserveSavedData = false
+		local _, status = self:InspectSavedData("MC_POST_GAME_STARTED partida nova")
+		self.preserveSavedData = status ~= "ok" and status ~= "missing"
+		if self.preserveSavedData then log("Dados anteriores inválidos; gravação bloqueada para preservá-los") end
 	end
 
 	self.initialized = true
 	log("Estado pronto; continued=" .. tostring(isContinued) .. ", jogadores=" .. summarize(self.players))
-	if not isContinued then self:Save("MC_POST_GAME_STARTED partida nova") end
 end
 
-function Storage:Save(reason)
+function Storage:OnGameExit(shouldSave)
+	if shouldSave then self:Save("MC_PRE_GAME_EXIT ShouldSave=true", true) end
+	self.initialized = false
+	log("MC_PRE_GAME_EXIT; armazenamento desativado até MC_POST_GAME_STARTED")
+end
+
+function Storage:Save(reason, allowEmpty)
 	local hasData = self.mod and self.mod:HasData() or false
 	log("Save solicitado; callback=" .. tostring(reason) .. ", initialized=" .. tostring(self.initialized)
 		.. ", isContinued=" .. tostring(self.isContinued) .. ", HasData=" .. tostring(hasData)
@@ -176,6 +189,16 @@ function Storage:Save(reason)
 	end
 	if self.preserveSavedData then
 		log("Save bloqueado para não sobrescrever dados durante Continue sem restauração válida")
+		return
+	end
+	if self.runSeed == nil then
+		log("Save bloqueado: seed da partida indisponível")
+		return
+	end
+	local total = 0
+	for _, data in pairs(self.players) do total = total + #data.ingredients end
+	if total == 0 and not allowEmpty then
+		log("Save vazio ignorado; estoque vazio será gravado apenas ao salvar a partida na saída")
 		return
 	end
 
@@ -192,6 +215,7 @@ function Storage:Save(reason)
 		log("Save JSON encode=ERRO: " .. tostring(encoded))
 		return
 	end
+	log("JSON encode=ok; ingredientes=" .. tostring(total) .. ", bytes=" .. #encoded)
 	local okSave, saveError = pcall(function() self.mod:SaveData(encoded) end)
 	if not okSave then
 		log("SaveData=ERRO: " .. tostring(saveError))

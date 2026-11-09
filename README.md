@@ -15,8 +15,8 @@ This callback sequence is documented by REPENTOGON, but it has not yet been exer
 - The total ingredient count is shown in the HUD.
 - Press **I** to open or close the per-player breakdown (up to ten ingredient types are displayed at once).
 - Ingredient IDs are stored separately per REPENTOGON player index.
-- The inventory is written with `Mod:SaveData` after each confirmed pickup, on room changes, and on an exit where `ShouldSave` is true. `MC_POST_SAVESLOT_LOAD` is diagnostic only because it can report internal/default slots before a run starts; actual restoration happens only in `MC_POST_GAME_STARTED` when `IsContinued` is true.
-- `[ICB DEBUG]` logs report callback order, player indexes/controllers, `HasData`, JSON decode status, inventory totals, save payload size, and a `diagnostic` marker (`persistencia` / `12345`) stored alongside the inventory. A failed Continue load blocks empty writes so existing persisted data is not overwritten.
+- The inventory is written with `Mod:SaveData` after each confirmed pickup, on room changes, and on an exit where `ShouldSave` is true. It is restored in `MC_POST_GAME_STARTED` when `IsContinued` is true. Writes before the run starts and empty writes during initialization are skipped.
+- `[ICB DEBUG]` logs report callback order, player indexes/controllers, `HasData`, JSON decode status, inventory totals, save payload size, and a `diagnostic` marker (`persistencia` / `12345`) stored alongside the inventory. Missing save data allows subsequent pickups to be saved. Invalid data, including legacy data without a run seed, is preserved and blocks writes until it can be investigated.
 
 ## In-game acceptance check
 

@@ -1,3 +1,10 @@
+local function trace(message)
+	print(message)
+	Isaac.DebugString(message)
+end
+
+trace("[ICB BUILD 2026-11-09-log-01] main.lua iniciado")
+
 local mod = RegisterMod("Infinite Crafting Bag", 1)
 
 local Storage = include("scripts/storage")
@@ -7,30 +14,25 @@ local UI = include("scripts/diagnostics")
 Storage:Init(mod)
 Capture:Init(mod, Storage)
 UI:Init(mod, Storage)
+trace("[ICB DEBUG] Modulos inicializados: storage=" .. type(Storage)
+	.. ", capture=" .. type(Capture) .. ", diagnostics=" .. type(UI))
 
 mod:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function(_, isContinued)
 	Storage:OnGameStarted(isContinued)
 	Capture:ResetPending()
-	print("[ICB DEBUG] callback=MC_POST_GAME_STARTED; Capture:ResetPending executado")
+	trace("[ICB DEBUG] callback=MC_POST_GAME_STARTED; Capture:ResetPending executado")
 	print("[Infinite Crafting Bag] Mod carregado!")
 end)
 
-mod:AddCallback(ModCallbacks.MC_POST_SAVESLOT_LOAD, function(_, saveSlot, isSelected, rawSlot)
-	print("[ICB DEBUG] callback=MC_POST_SAVESLOT_LOAD; saveSlot=" .. tostring(saveSlot)
-		.. ", isSelected=" .. tostring(isSelected) .. ", rawSlot=" .. tostring(rawSlot))
-	Storage:OnSaveSlotLoaded(saveSlot, isSelected, rawSlot)
-end)
-
 mod:AddCallback(ModCallbacks.MC_PRE_GAME_EXIT, function(_, shouldSave)
-	print("[ICB DEBUG] callback=MC_PRE_GAME_EXIT; ShouldSave=" .. tostring(shouldSave))
-	if shouldSave then
-		Storage:Save("MC_PRE_GAME_EXIT ShouldSave=true")
-	else
-		print("[ICB DEBUG] MC_PRE_GAME_EXIT; ShouldSave=false; nenhum SaveData na saída")
+	trace("[ICB DEBUG] callback=MC_PRE_GAME_EXIT; ShouldSave=" .. tostring(shouldSave))
+	if not shouldSave then
+		trace("[ICB DEBUG] MC_PRE_GAME_EXIT; ShouldSave=false; nenhum SaveData na saída")
 	end
+	Storage:OnGameExit(shouldSave)
 end)
 
 mod:AddCallback(ModCallbacks.MC_POST_NEW_ROOM, function()
-	print("[ICB DEBUG] callback=MC_POST_NEW_ROOM")
+	trace("[ICB DEBUG] callback=MC_POST_NEW_ROOM")
 	Storage:Save("MC_POST_NEW_ROOM")
 end)
