@@ -20,7 +20,8 @@ function Crafting:Prepare(player, item)
     local recipe = {}; for i, id in ipairs(item.recipe) do recipe[i] = id end
     self.prepared = {hash = GetPtrHash(player), item = {id = item.id, name = item.name, recipe = recipe}}
     self.started, self.armed = nil, false
-    log("receita preparada; jogador=" .. tostring(player:GetPlayerIndex()) .. ", item=" .. tostring(item.id))
+    log("receita preparada; jogador=" .. tostring(player:GetPlayerIndex()) .. ", hash=" .. tostring(GetPtrHash(player))
+        .. ", ingredientes=" .. tostring(self.storage:Count(player)) .. ", item=" .. tostring(item.id))
     return true, "Receita pronta: feche e segure Q"
 end
 
@@ -59,6 +60,9 @@ function Crafting:Tick(open, down, now)
     self.blockUntilRelease = true
     self.armed, self.started = false, nil
     local player, item = self:FindPlayer(), self.prepared.item
+    log("Q concluido; jogador_encontrado=" .. tostring(player ~= nil) .. ", hash=" .. tostring(self.prepared.hash)
+        .. ", item=" .. tostring(item.id) .. (player and (", jogador=" .. tostring(player:GetPlayerIndex())
+        .. ", ingredientes=" .. tostring(self.storage:Count(player))) or ""))
     self.prepared = nil
     local ok, message = self:Execute(player, item)
     self.message, self.messageUntil = message, now + 4000
@@ -106,7 +110,13 @@ function Crafting:Validate(player, item, expectedRevision, forDelivery)
         if id ~= item.id then return nil, "Receita alterada; selecione novamente" end
         if forDelivery then
             if not config:IsAvailable() then return nil, "Item indisponivel nesta partida" end
-            if not player:CanAddCollectibleToInventory(item.id) then return nil, "Inventario indisponivel" end
+            -- This API describes Tainted Isaac's limited item inventory, not
+            -- the virtual bag or general collectible eligibility.
+            if player:GetPlayerType() == PlayerType.PLAYER_ISAAC_B and not player:CanAddCollectibleToInventory(item.id) then
+                log("CanAddCollectibleToInventory=false; personagem=Tainted Isaac, jogador="
+                    .. tostring(player:GetPlayerIndex()) .. ", item=" .. tostring(item.id))
+                return nil, "Item nao cabe no inventario"
+            end
             if config.Type == ItemType.ITEM_ACTIVE and player:GetActiveItem(activeSlot) ~= 0 then
                 return nil, "Esvazie o espaco de item ativo"
             end
@@ -131,16 +141,21 @@ function Crafting:Execute(player, item)
         end
         local transaction, err = self.storage:ConsumeRecipe(player, item.recipe)
         if not transaction then return false, err end
+        log("consumo aplicado; jogador=" .. tostring(player:GetPlayerIndex()) .. ", restantes=" .. tostring(self.storage:Count(player)))
         local saved, result = pcall(self.storage.Save, self.storage, "craft debit", true)
         if not saved or not result then
             self.storage:RollbackRecipe(transaction)
+            log("save falhou antes da entrega; ingredientes restaurados em memoria")
             return false, "Falha ao salvar; nada entregue"
         end
         self.attempt = {hash = GetPtrHash(player)}
         local delivered, failure = pcall(function() player:AddCollectible(item.id, 0, true, slot, 0, pool) end)
         local observed = self.attempt.observed
         self.attempt = nil
-        if delivered and observed == item.id then return true, "Item fabricado!" end
+        if delivered and observed == item.id then
+            log("entrega confirmada; jogador=" .. tostring(player:GetPlayerIndex()) .. ", item=" .. tostring(item.id))
+            return true, "Item fabricado!"
+        end
         log("entrega incerta; item=" .. tostring(item.id) .. " observado=" .. tostring(observed) .. " erro=" .. tostring(failure))
         return false, "Entrega incerta; consulte o log"
     end)

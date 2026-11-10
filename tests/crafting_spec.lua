@@ -22,6 +22,7 @@ Isaac={DebugString=function() end, GetPlayer=function(i) return wrapper(players[
 function Game() return {GetNumPlayers=function() return #players end, GetFrameCount=function() return 0 end,
     GetSeeds=function() return {GetStartSeed=function() return 42 end} end, IsPaused=function() return false end} end
 ItemType={ITEM_ACTIVE=2}; ActiveSlot={SLOT_PRIMARY=0}
+PlayerType={PLAYER_ISAAC_B=21, PLAYER_CAIN_B=23}
 CollectibleType={COLLECTIBLE_BAG_OF_CRAFTING=1}
 local output=101
 EntityPlayer={CalculateBagOfCraftingOutput=function() return output, 1 end}
@@ -33,7 +34,8 @@ local function player(index)
     function p:Exists() return true end
     function p:IsDead() return false end
     function p:HasCollectible() return true end
-    function p:CanAddCollectibleToInventory() return true end
+    function p:GetPlayerType() return self.playerType or PlayerType.PLAYER_CAIN_B end
+    function p:CanAddCollectibleToInventory() return false end
     function p:GetActiveItem() return self.active or 0 end
     function p:GetBagOfCraftingContent() return self.bag or {} end
     function p:ToPlayer() return self end
@@ -44,6 +46,11 @@ local p, other=player(0), player(1); players={p,other}
 local recipe={1,1,1,1,2,2,2,2}
 local item={id=101,recipe=recipe}
 storage:Add(p,recipe); storage:Add(other,recipe)
+p.playerType=PlayerType.PLAYER_ISAAC_B
+assert(crafting:Prepare(p,item))
+crafting:Tick(false,false,0); crafting:Tick(false,true,1); crafting:Tick(false,true,1201)
+assert(crafting.message=="Item nao cabe no inventario" and storage:Count(p)==8 and #p.given==0)
+p.playerType=PlayerType.PLAYER_CAIN_B
 config.AchievementID=7; unlocked=false
 local valid, reason=crafting:Prepare(p,item)
 assert(not valid and reason=="Item nao desbloqueado")

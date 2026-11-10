@@ -146,6 +146,14 @@ quads={}; ui:Render(); assert(#quads==1, "no scrollbar when items fit")
 press(Keyboard.KEY_R); assert(ui.availability == "all" and #ui:FilteredList() == 9)
 press(Keyboard.KEY_R); assert(ui.availability == "locked" and #ui:FilteredList() == 1 and ui:FilteredList()[1].id==123)
 press(Keyboard.KEY_R); assert(ui.availability == "available" and #ui:FilteredList() == 8)
+ui.crafting.Prepare=function(_, chosenPlayer, item)
+    ui.crafting.prepared={hash=GetPtrHash(chosenPlayer), item=item}
+    return true, "Receita pronta"
+end
+press(Keyboard.KEY_ENTER)
+assert(ui.crafting.prepared and ui.crafting.prepared.hash==GetPtrHash(player))
+local prepared = ui.crafting.prepared
 press(Keyboard.KEY_I); assert(not ui.open)
+assert(ui.crafting.prepared == prepared, "closing catalog must retain the prepared recipe")
 assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,player,0,0) == nil)
 print("PASS UI input: edges, held repeat, focus, filters, search, pause, busy search and release")
