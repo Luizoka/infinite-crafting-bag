@@ -158,7 +158,7 @@ assert(ui.crafting.prepared == prepared, "closing catalog must retain the prepar
 local drawPrepared=callbacks[ModCallbacks.MC_POST_PLAYERHUD_RENDER_CRAFTING_TABLE]
 local hudPos={X=400,Y=250}
 icons={}; drawPrepared(nil,player,hudPos,0.5)
-assert(#icons==1 and icons[1][1]==380, "preview follows native HUD offset and scale")
+assert(#icons==1 and icons[1][1]==317, "preview follows native HUD offset and scale")
 local creations=spriteCreations
 icons={}; drawPrepared(nil,player,hudPos,0.5); drawPrepared(nil,player,hudPos,0.5)
 assert(#icons==2 and spriteCreations==creations, "preview must reuse cached sprites")

@@ -320,7 +320,22 @@ function UI:RenderPreparedIcon(player, position, scale)
     for ingredient, amount in pairs(needed) do
         if (counts[ingredient] or 0) < amount then return end
     end
-    self:Icon(self.previewItem, position.X - 40 * scale, position.Y, scale, true)
+    -- The native bag is empty because capture stores pickups virtually. Show
+    -- the selected recipe separately, above the native HUD, without changing it.
+    local width, height = 178 * scale, 54 * scale
+    local left = math.max(0, math.min(position.X - width, Isaac.GetScreenWidth() - width))
+    local top = math.max(0, position.Y - 72 * scale)
+    local bg = KColor(0.06, 0.045, 0.04, 0.88)
+    Isaac.DrawQuad(Vector(left, top), Vector(left + width, top),
+        Vector(left, top + height), Vector(left + width, top + height), bg, 1)
+    self:Icon(self.previewItem, left + 12 * scale, top + 13 * scale, scale, true)
+    self:Draw("Receita preparada", left + 25 * scale, top + 3 * scale, 0.6 * scale, KColor(1, 0.84, 0.52, 1))
+    for i, ingredient in ipairs(prepared.item.recipe) do
+        local column, row = (i - 1) % 2, math.floor((i - 1) / 2)
+        self:Draw(shortName(ingredientName(ingredient), 14),
+            left + (25 + column * 75) * scale, top + (15 + row * 9) * scale,
+            0.52 * scale)
+    end
 end
 
 function UI:Render()

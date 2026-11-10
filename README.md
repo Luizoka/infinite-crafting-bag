@@ -7,7 +7,7 @@ Mod for The Binding of Isaac: Repentance+ with REPENTOGON. The Bag of Crafting s
 - **I** opens or closes the catalog. While editing the search, press Enter or Escape to finish editing first.
 - **S** edits the name search; type letters, numbers or spaces and use Backspace to delete. Enter confirms the search and Escape cancels the edit.
 - **Enter** on a catalog result validates and prepares its recipe without consuming ingredients. Close the catalog and hold **Q** for 1.2 seconds to craft. Release early to cancel.
-- The prepared item's icon is drawn beside the Bag of Crafting HUD when REPENTOGON provides and runs its crafting-table render callback. It disappears when the preparation is cleared or the required stock is insufficient.
+- A separate overlay above the Bag of Crafting HUD shows the prepared item icon and the eight ingredient names when REPENTOGON provides and runs its crafting-table render callback. The original bag remains untouched; its native slots are empty because ingredients are stored virtually. The overlay disappears when preparation is cleared or the required stock is insufficient.
 - **Up/Down** selects an item or scrolls the ingredient inventory; holding an arrow repeats after a short delay. **Page Up/Page Down** move through the item list.
 - **R** cycles unlock filters (unlocked by default, all, locked). **Q** cycles quality filters (all, 0–4).
 - **Tab** switches between the item list and ingredient inventory. **P** selects the next player.
