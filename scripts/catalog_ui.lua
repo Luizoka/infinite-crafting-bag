@@ -78,6 +78,35 @@ function UI:Init(mod, storage)
     mod:AddCallback(ModCallbacks.MC_POST_GAME_STARTED, function() self.crafting:Reset(); self:SetFocus("closed"); self.epoch = self.epoch + 1 end)
     mod:AddCallback(ModCallbacks.MC_PRE_GAME_EXIT, function() self.crafting:Reset(); self:SetFocus("closed") end)
     mod:AddCallback(ModCallbacks.MC_INPUT_ACTION, function(_, entity, hook, action)
+        -- No controller is exposed for nil entities, so only intercept global
+        -- menu shortcuts there; entity-bound inputs are limited to player zero.
+        if self.searchFocused then
+            if entity then
+                local player = entity:ToPlayer()
+                if player and player.ControllerIndex == 0 then
+                    if hook == InputHook.GET_ACTION_VALUE then return 0 end
+                    return false
+                end
+            elseif action == ButtonAction.ACTION_MAP or action == ButtonAction.ACTION_RESTART
+                or action == ButtonAction.ACTION_FULLSCREEN or action == ButtonAction.ACTION_MUTE
+                or action == ButtonAction.ACTION_CONSOLE or action == ButtonAction.ACTION_MENUCONFIRM
+                or action == ButtonAction.ACTION_MENUBACK then
+                if hook == InputHook.GET_ACTION_VALUE then return 0 end
+                return false
+            end
+        elseif self.searchExitKey and Input.IsButtonPressed(self.searchExitKey, 0)
+            and ((self.searchExitKey == Keyboard.KEY_ENTER and action == ButtonAction.ACTION_MENUCONFIRM)
+                or (self.searchExitKey == Keyboard.KEY_ESCAPE and action == ButtonAction.ACTION_MENUBACK)) then
+            if not entity then
+                if hook == InputHook.GET_ACTION_VALUE then return 0 end
+                return false
+            end
+            local player = entity:ToPlayer()
+            if player and player.ControllerIndex == 0 then
+                if hook == InputHook.GET_ACTION_VALUE then return 0 end
+                return false
+            end
+        end
         if action == ButtonAction.ACTION_DROP and self.crafting:ShouldBlock(entity, Input.IsButtonPressed(Keyboard.KEY_Q, 0)) then
             if hook == InputHook.GET_ACTION_VALUE then return 0 end
             return false
@@ -111,10 +140,12 @@ function UI:SetFocus(focus)
     if self.focus == focus then return end
     self.focus = focus
     self.open = focus ~= "closed"
-    self.editing = focus == "search"
+    self.searchFocused = focus == "search"
+    self.editing = self.searchFocused
     self.inventoryView = focus == "inventory"
     if self.input then self.input:SuppressHeld() end
     if focus == "closed" then
+        self.searchExitKey = nil
         self.pending, self.message, self.preferredId = nil, nil, nil
         self.query, self.searchBefore = "", nil
         self.availability, self.quality = "available", -1
@@ -153,6 +184,7 @@ function UI:ResetListSelection()
 end
 
 function UI:HandleInput()
+    if self.searchExitKey and not Input.IsButtonPressed(self.searchExitKey, 0) then self.searchExitKey = nil end
     local enabled = self.storage.initialized and not Game():IsPaused()
     local event = self.input:Poll(Isaac.GetTime(), enabled)
     self.crafting:Tick(self.open, Input.IsButtonPressed(Keyboard.KEY_Q, 0), Isaac.GetTime())
@@ -162,9 +194,11 @@ function UI:HandleInput()
     end
     if self.focus == "search" then
         if event[Keyboard.KEY_ENTER] then
+            self.searchExitKey = Keyboard.KEY_ENTER
             self.searchBefore = nil
             self:SetFocus("results")
         elseif event[Keyboard.KEY_ESCAPE] then
+            self.searchExitKey = Keyboard.KEY_ESCAPE
             self.query = self.searchBefore or ""
             self.searchBefore = nil
             self:ResetListSelection()

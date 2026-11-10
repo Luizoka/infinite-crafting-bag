@@ -14,6 +14,8 @@ Mod for The Binding of Isaac: Repentance+ with REPENTOGON. The Bag of Crafting s
 
 The catalog considers only items discovered from the selected player's current stock. The unlock filter checks the item achievement against `PersistentGameData:Unlocked()`; items with no achievement are unlocked by default. Run restrictions are checked separately before crafting. The locked filter is not a complete list of all locked collectibles. Search uses the localized item name when available and supports ASCII case-insensitive typing.
 
+During search editing, the catalog suppresses supported game actions for keyboard player zero and selected global menu actions through `MC_INPUT_ACTION`. The game does not expose the controller for entity-less actions, and some actions such as pause are not polled through this callback. Mods that read physical keys directly through `Input` can still react; configure conflicting mod hotkeys or temporarily disable those shortcuts if needed. Enter and Escape return to the catalog; close it to restore normal movement and actions.
+
 ## Recipe search
 
 The mod counts ingredients by type and generates bounded combinations of eight in sorted order, so permutations are evaluated once. Each combination is passed to REPENTOGON's `EntityPlayer.CalculateBagOfCraftingOutput`; the returned collectible ID identifies the entry, and the first discovered recipe is kept. Browsing and searching do not consume ingredients or grant collectibles.

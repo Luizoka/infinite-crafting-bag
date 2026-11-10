@@ -1,7 +1,8 @@
 function include(path) return dofile(path .. ".lua") end
 Keyboard = {KEY_I=73, KEY_ENTER=257, KEY_ESCAPE=256, KEY_BACKSPACE=259, KEY_SPACE=32,
     KEY_TAB=258, KEY_P=80, KEY_S=83, KEY_F=70, KEY_R=82, KEY_Q=81, KEY_UP=265, KEY_DOWN=264, KEY_PAGE_UP=266, KEY_PAGE_DOWN=267}
-ButtonAction = { ACTION_LEFT=0, ACTION_DROP=11, ACTION_MAP=13, ACTION_FULLSCREEN=16, ACTION_RESTART=18 }
+ButtonAction = { ACTION_LEFT=0, ACTION_DROP=11, ACTION_MAP=13, ACTION_MENUCONFIRM=14, ACTION_MENUBACK=15,
+    ACTION_FULLSCREEN=16, ACTION_MUTE=17, ACTION_RESTART=18, ACTION_CONSOLE=32 }
 InputHook = { GET_ACTION_VALUE=2 }
 ModCallbacks = { MC_POST_UPDATE=1, MC_POST_HUD_RENDER=2, MC_POST_NEW_ROOM=3, MC_POST_ADD_COLLECTIBLE=4,
     MC_POST_ACHIEVEMENT_UNLOCK=5, MC_POST_GET_COLLECTIBLE=6, MC_POST_GAME_STARTED=7, MC_INPUT_ACTION=8,
@@ -101,11 +102,26 @@ assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,player,0,ButtonAction.ACTION_
 assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,nil,0,ButtonAction.ACTION_FULLSCREEN) == nil)
 press(Keyboard.KEY_R); assert(ui.availability == "all")
 press(Keyboard.KEY_Q); assert(ui.quality == 0)
-press(Keyboard.KEY_S); assert(ui.focus == "search")
-press(Keyboard.KEY_R); press(Keyboard.KEY_Q); press(Keyboard.KEY_F)
-assert(ui.query == "rqf" and ui.availability == "all" and ui.quality == 0)
-press(Keyboard.KEY_ESCAPE); assert(ui.focus == "results" and ui.query == "")
-press(Keyboard.KEY_S); press(Keyboard.KEY_I); press(Keyboard.KEY_ENTER)
+press(Keyboard.KEY_S); assert(ui.focus == "search" and ui.searchFocused)
+local otherSearch = {ControllerIndex=1, ToPlayer=function(self) return self end}
+assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,player,0,ButtonAction.ACTION_FULLSCREEN)==false)
+assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,player,1,ButtonAction.ACTION_MENUCONFIRM)==false)
+assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,player,2,ButtonAction.ACTION_FULLSCREEN)==0)
+assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,nil,0,ButtonAction.ACTION_FULLSCREEN)==false)
+assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,otherSearch,0,ButtonAction.ACTION_FULLSCREEN)==nil)
+press(Keyboard.KEY_R); press(Keyboard.KEY_Q); press(Keyboard.KEY_F); press(67); press(76); press(Keyboard.KEY_SPACE)
+assert(ui.query == "rqfcl " and ui.availability == "all" and ui.quality == 0)
+press(Keyboard.KEY_BACKSPACE); assert(ui.query == "rqfcl")
+held[Keyboard.KEY_ESCAPE]=true; tick(); assert(ui.focus == "results" and ui.query == "" and not ui.searchFocused)
+assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,nil,0,ButtonAction.ACTION_MENUBACK)==false)
+held[Keyboard.KEY_ESCAPE]=nil; tick()
+assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,nil,0,ButtonAction.ACTION_MENUBACK)==nil)
+press(Keyboard.KEY_S); press(Keyboard.KEY_I)
+held[Keyboard.KEY_ENTER]=true; tick(); assert(not ui.searchFocused and ui.focus == "results")
+assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,nil,0,ButtonAction.ACTION_MENUCONFIRM)==false)
+assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,nil,2,ButtonAction.ACTION_MENUCONFIRM)==0)
+held[Keyboard.KEY_ENTER]=nil; tick()
+assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,nil,0,ButtonAction.ACTION_MENUCONFIRM)==nil)
 assert(ui.focus == "results" and ui.query == "i", "Enter must confirm search and I must type in search")
 press(Keyboard.KEY_TAB); assert(ui.focus == "inventory")
 press(Keyboard.KEY_ENTER); assert(ui.focus == "inventory", "inventory must not enter invisible search")
