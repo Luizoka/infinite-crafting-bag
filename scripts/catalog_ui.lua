@@ -59,6 +59,13 @@ function UI:Init(mod, storage)
     mod:AddCallback(ModCallbacks.MC_POST_UPDATE, function() self:Update() end)
     mod:AddCallback(ModCallbacks.MC_POST_RENDER, function() self:HandleInput() end)
     mod:AddCallback(ModCallbacks.MC_POST_HUD_RENDER, function() self:Render() end)
+    if ModCallbacks.MC_POST_PLAYERHUD_RENDER_CRAFTING_TABLE then
+        mod:AddCallback(ModCallbacks.MC_POST_PLAYERHUD_RENDER_CRAFTING_TABLE, function(_, player, position, scale)
+            self:RenderPreparedIcon(player, position, scale)
+        end)
+    else
+        Isaac.DebugString("[ICB DEBUG] Previa indisponivel: callback do HUD da Bag of Crafting ausente")
+    end
     mod:AddCallback(ModCallbacks.MC_POST_NEW_ROOM, function() self.epoch = self.epoch + 1 end)
     mod:AddCallback(ModCallbacks.MC_POST_ADD_COLLECTIBLE, function(_, id, _, _, _, _, player)
         self.epoch = self.epoch + 1
@@ -290,6 +297,30 @@ function UI:Icon(item, x, y, scale, centerFrame)
         local offset = centerFrame and self.iconOffsets[item.id] * scale * 0.38 or 0
         sprite:RenderLayer(1, Vector(x, y - offset))
     end
+end
+
+function UI:RenderPreparedIcon(player, position, scale)
+    local prepared = self.crafting.prepared
+    if not self.storage.initialized or not prepared or not player or not position
+        or GetPtrHash(player) ~= prepared.hash then return end
+
+    -- Cache the metadata as well as the sprite. Do not modify the native HUD sprite.
+    local id = prepared.item.id
+    if self.previewId ~= id then
+        local config = Isaac.GetItemConfig():GetCollectible(id)
+        self.previewId = id
+        self.previewItem = config and {id = id, gfx = config.GfxFileName} or nil
+    end
+    if not self.previewItem then return end
+
+    -- A recipe may become unaffordable after selection; keep this a read-only check.
+    local needed = {}
+    for _, ingredient in ipairs(prepared.item.recipe) do needed[ingredient] = (needed[ingredient] or 0) + 1 end
+    local counts = self.storage:GetTypeCounts(player)
+    for ingredient, amount in pairs(needed) do
+        if (counts[ingredient] or 0) < amount then return end
+    end
+    self:Icon(self.previewItem, position.X - 40 * scale, position.Y, scale, true)
 end
 
 function UI:Render()

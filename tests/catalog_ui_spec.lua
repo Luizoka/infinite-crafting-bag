@@ -5,9 +5,9 @@ ButtonAction = { ACTION_LEFT=0, ACTION_DROP=11, ACTION_MAP=13, ACTION_FULLSCREEN
 InputHook = { GET_ACTION_VALUE=2 }
 ModCallbacks = { MC_POST_UPDATE=1, MC_POST_HUD_RENDER=2, MC_POST_NEW_ROOM=3, MC_POST_ADD_COLLECTIBLE=4,
     MC_POST_ACHIEVEMENT_UNLOCK=5, MC_POST_GET_COLLECTIBLE=6, MC_POST_GAME_STARTED=7, MC_INPUT_ACTION=8,
-    MC_POST_RENDER=9, MC_PRE_GAME_EXIT=10 }
+    MC_POST_RENDER=9, MC_PRE_GAME_EXIT=10, MC_POST_PLAYERHUD_RENDER_CRAFTING_TABLE=11 }
 local held, now, nativeCalls, paused = {}, 0, 0, false
-local screenW, screenH, icons, texts, locked, quads = 442, 286, {}, {}, {}, {}
+local screenW, screenH, icons, texts, locked, quads, spriteCreations = 442, 286, {}, {}, {}, {}, 0
 Input = {IsButtonPressed=function(k) return held[k] or false end}
 EntityPlayer = {CalculateBagOfCraftingOutput=function(recipe)
     nativeCalls=nativeCalls+1; assert(#recipe==8)
@@ -21,7 +21,7 @@ function Game() return {GetNumPlayers=function() return 1 end, IsPaused=function
 function KColor(...) return {...} end
 function Vector(...) return {...} end
 function Font() return {GetStringWidthUTF8=function(_,s) return #s*6 end, Load=function() end, DrawString=function() end, DrawStringScaledUTF8=function(_,text,x,y) texts[#texts+1]={text=text,y=y} end} end
-function Sprite() return {Load=function() end, ReplaceSpritesheet=function() end, LoadGraphics=function() end,
+function Sprite() spriteCreations=spriteCreations+1; return {Load=function() end, ReplaceSpritesheet=function() end, LoadGraphics=function() end,
     SetFrame=function() end, RenderLayer=function(_,_,pos) icons[#icons+1]=pos end,
     GetLayer=function() return {GetPos=function() return {Y=0} end} end,
     GetLayerFrameData=function() return {GetPos=function() return {Y=-10} end,
@@ -36,7 +36,7 @@ local callbacks = {}
 local mod = {AddCallback=function(_, id, fn) callbacks[id]=fn end}
 local counts, revision = {[1]=8,[2]=8}, 1
 local storage = {initialized=true, Count=function() return 16 end, GetRevision=function() return revision end,
-    CountsByType=function() return counts end}
+    CountsByType=function() return counts end, GetTypeCounts=function() return counts end}
 local ui=include("scripts/catalog_ui"); ui:Init(mod, storage)
 local function tick(ms, update)
     now = now + (ms or 16)
@@ -155,5 +155,18 @@ assert(ui.crafting.prepared and ui.crafting.prepared.hash==GetPtrHash(player))
 local prepared = ui.crafting.prepared
 press(Keyboard.KEY_I); assert(not ui.open)
 assert(ui.crafting.prepared == prepared, "closing catalog must retain the prepared recipe")
+local drawPrepared=callbacks[ModCallbacks.MC_POST_PLAYERHUD_RENDER_CRAFTING_TABLE]
+local hudPos={X=400,Y=250}
+icons={}; drawPrepared(nil,player,hudPos,0.5)
+assert(#icons==1 and icons[1][1]==380, "preview follows native HUD offset and scale")
+local creations=spriteCreations
+icons={}; drawPrepared(nil,player,hudPos,0.5); drawPrepared(nil,player,hudPos,0.5)
+assert(#icons==2 and spriteCreations==creations, "preview must reuse cached sprites")
+icons={}; drawPrepared(nil,other,hudPos,1); assert(#icons==0, "other players must not show this recipe")
+local oldCounts=counts; counts={}; icons={}; drawPrepared(nil,player,hudPos,1)
+assert(#icons==0, "unaffordable recipe must not show a preview"); counts=oldCounts
+ui.crafting.prepared={hash=GetPtrHash(player), item={id=999,recipe={1,1,1,1,1,1,1,1}}}
+icons={}; drawPrepared(nil,player,hudPos,1); assert(#icons==1 and ui.previewId==999, "new selection updates preview")
+ui.crafting.prepared=nil; icons={}; drawPrepared(nil,player,hudPos,1); assert(#icons==0, "cleared recipe hides preview")
 assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,player,0,0) == nil)
 print("PASS UI input: edges, held repeat, focus, filters, search, pause, busy search and release")
