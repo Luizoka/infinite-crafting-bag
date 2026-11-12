@@ -377,17 +377,33 @@ function UI:Render()
     local player = self:GetPlayer()
     if not player then return end
     if not self.open then
-        self.font:DrawString("Infinite Crafting Bag: " .. self.storage:Count(player) .. " ingredientes (I)", 12, 42, KColor(1, 1, 1, 1), 0, true)
         local c = self.crafting
+        local hasMessage = c.message and Isaac.GetTime() < c.messageUntil
+        local width, height = 150, (c.prepared or hasMessage) and 37 or 24
+        local scale = math.min(1, (Isaac.GetScreenWidth() - 12) / width)
+        local x, y = 8, Isaac.GetScreenHeight() - height * scale - 8
+        local function rect(dx, dy, w, h, color)
+            Isaac.DrawQuad(Vector(x + dx * scale, y + dy * scale), Vector(x + (dx + w) * scale, y + dy * scale),
+                Vector(x + dx * scale, y + (dy + h) * scale), Vector(x + (dx + w) * scale, y + (dy + h) * scale), color, 1)
+        end
+        local function label(text, dx, dy, size, color)
+            self:Draw(text, x + dx * scale, y + dy * scale, size * scale, color)
+        end
+        local gold, white = KColor(1, 0.84, 0.52, 1), KColor(1, 1, 1, 1)
+        rect(0, 0, width, height, KColor(0.06, 0.045, 0.04, 0.88))
+        rect(0, 0, 2, height, gold)
+        label("CRAFTING BAG", 7, 3, 0.65, gold)
+        label("[I] ABRIR", 105, 3, 0.55, white)
+        label(self.storage:Count(player) .. " ingredientes", 7, 13, 0.65, white)
         if c.prepared then
-            self.font:DrawString("Segure Q: " .. shortName(c.prepared.item.name, 25), 12, 53, KColor(1, 1, 1, 1), 0, true)
+            label("Segure Q: " .. shortName(c.prepared.item.name, 23), 7, 24, 0.55, gold)
             local progress = c:Progress(Isaac.GetTime())
             if progress > 0 then
-                local color = KColor(1, 0.84, 0.52, 1)
-                Isaac.DrawQuad(Vector(12,65), Vector(12+100*progress,65), Vector(12,68), Vector(12+100*progress,68), color, 1)
+                rect(7, 34, 136, 1, KColor(0.3, 0.24, 0.19, 1))
+                rect(7, 34, 136 * progress, 1, gold)
             end
-        elseif c.message and Isaac.GetTime() < c.messageUntil then
-            self.font:DrawString(c.message, 12, 53, KColor(1, 1, 1, 1), 0, true)
+        elseif hasMessage then
+            label(shortName(c.message, 32), 7, 24, 0.55, white)
         end
         return
     end
