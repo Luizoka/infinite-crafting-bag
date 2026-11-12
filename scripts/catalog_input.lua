@@ -2,12 +2,13 @@
 local InputState = {}
 InputState.__index = InputState
 
-function InputState.new(keys, repeatKeys)
+function InputState.new(keys, repeatKeys, readButton)
     local ordered, seen = {}, {}
     for _, key in ipairs(keys) do
         if key and not seen[key] then ordered[#ordered + 1] = key; seen[key] = true end
     end
-    return setmetatable({keys = ordered, repeatKeys = repeatKeys, held = {}, blocked = {}, repeatAt = {}}, InputState)
+    return setmetatable({keys = ordered, repeatKeys = repeatKeys, readButton = readButton or Input.IsButtonPressed,
+        held = {}, blocked = {}, repeatAt = {}}, InputState)
 end
 
 function InputState:SuppressHeld()
@@ -20,7 +21,7 @@ end
 function InputState:Poll(now, enabled)
     local events = {}
     for _, key in ipairs(self.keys) do
-        local down = Input.IsButtonPressed(key, 0)
+        local down = self.readButton(key, 0)
         local wasDown = self.held[key] or false
         if not down then
             self.blocked[key], self.repeatAt[key] = nil, nil

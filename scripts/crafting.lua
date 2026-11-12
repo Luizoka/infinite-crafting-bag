@@ -10,25 +10,163 @@ function Crafting.new(storage)
 end
 
 function Crafting:Reset()
+    self:StopHoldAnimation()
+    self:EndPreviewRender()
+    self:ClearPreview()
     self.prepared, self.started, self.armed, self.blockUntilRelease = nil, nil, false, false
     self.message, self.messageUntil = nil, nil
+    self.deliveryGuard = nil
+end
+
+function Crafting:ClearPreview()
+    local player = self:FindPlayer()
+    if player and self.prepared then
+        local ok, err = pcall(function()
+            local empty = true
+            for _, id in ipairs(player:GetBagOfCraftingContent()) do if id ~= 0 then empty = false; break end end
+            if empty and player:GetBagOfCraftingOutput() == self.prepared.item.id then
+                -- Recalculating an empty bag clears both output and item pool,
+                -- and invalidates the native HUD's cached crafting item.
+                player:SetBagOfCraftingContent({})
+            end
+        end)
+        if not ok then log("falha ao limpar previa: " .. tostring(err)) end
+    end
+end
+
+function Crafting:Cancel(down)
+    if not self.prepared then return end
+    self:StopHoldAnimation()
+    self:EndPreviewRender()
+    self:ClearPreview()
+    self.prepared, self.started, self.armed = nil, nil, false
+    self.blockUntilRelease = down or false
+    self.message, self.messageUntil = nil, nil
+end
+
+function Crafting:StartHoldAnimation(player)
+    if not player then return end
+    local ok, err = pcall(function()
+        player:AnimateCollectible(CollectibleType.COLLECTIBLE_BAG_OF_CRAFTING, "LiftItem", "PlayerPickup")
+    end)
+    if ok then self.holdAnimationPlayer = player else log("animacao da bolsa indisponivel: " .. tostring(err)) end
+end
+
+function Crafting:StopHoldAnimation()
+    local player = self.holdAnimationPlayer
+    self.holdAnimationPlayer = nil
+    if not player then return end
+    local ok, err = pcall(function()
+        local animation = player:GetSprite():GetAnimation()
+        if animation:find("Pickup", 1, true) or animation:find("LiftItem", 1, true) then
+            player:AnimateCollectible(CollectibleType.COLLECTIBLE_BAG_OF_CRAFTING, "HideItem")
+        end
+    end)
+    if not ok then log("falha ao encerrar animacao da bolsa: " .. tostring(err)) end
+end
+
+-- The native HUD reads the eight bag slots directly. Mirror the recipe only
+-- around its render callback; gameplay and pickup capture keep an empty bag.
+function Crafting:BeginPreviewRender(player)
+    local prepared = self.prepared
+    if self.renderMirror or not self.storage.initialized or not prepared or not player
+        or GetPtrHash(player) ~= prepared.hash then return end
+    local ok, err = pcall(function()
+        for _, id in ipairs(player:GetBagOfCraftingContent()) do if id ~= 0 then return end end
+        local recipe = {}
+        for i, id in ipairs(prepared.item.recipe) do recipe[i] = id end
+        self.renderMirror = {player = player, hash = prepared.hash, recipe = recipe, id = prepared.item.id}
+        player:SetBagOfCraftingContent(recipe)
+        if player:GetBagOfCraftingOutput() ~= prepared.item.id then
+            player:SetBagOfCraftingOutput(prepared.item.id)
+        end
+    end)
+    if not ok then
+        log("falha ao preparar renderizacao: " .. tostring(err))
+        self:EndPreviewRender()
+    end
+end
+
+function Crafting:EndPreviewRender(player)
+    local mirror = self.renderMirror
+    if not mirror or (player and GetPtrHash(player) ~= mirror.hash) then return end
+    self.renderMirror = nil
+    local ok, err = pcall(function()
+        local current = mirror.player:GetBagOfCraftingContent()
+        for i = 1, 8 do if current[i] ~= mirror.recipe[i] then return end end
+        mirror.player:SetBagOfCraftingContent({})
+        if self.prepared and self.prepared.hash == mirror.hash and self.prepared.item.id == mirror.id then
+            mirror.player:SetBagOfCraftingOutput(mirror.id)
+        end
+    end)
+    if not ok then log("falha ao restaurar bolsa apos renderizacao: " .. tostring(err)) end
+end
+
+function Crafting:SyncPreview()
+    if not self.prepared then return end
+    local player = self:FindPlayer()
+    if not player or not self.storage.initialized then return end
+    local ok, err = pcall(function()
+        local counts, needed = self.storage:CountsByType(player), {}
+        for _, id in ipairs(self.prepared.item.recipe) do needed[id] = (needed[id] or 0) + 1 end
+        for id, count in pairs(needed) do
+            if (counts[id] or 0) < count then
+                self:StopHoldAnimation()
+                self:ClearPreview()
+                self.prepared, self.started, self.armed = nil, nil, false
+                self.message, self.messageUntil = "Ingredientes insuficientes", Isaac.GetTime() + 4000
+                return
+            end
+        end
+        -- A populated native bag belongs to the game or another mod.
+        for _, id in ipairs(player:GetBagOfCraftingContent()) do if id ~= 0 then return end end
+        if player:GetBagOfCraftingOutput() ~= self.prepared.item.id then
+            player:SetBagOfCraftingOutput(self.prepared.item.id)
+        end
+    end)
+    if not ok then log("falha ao sincronizar previa: " .. tostring(err)) end
 end
 
 function Crafting:Prepare(player, item)
     local valid, reason = self:Validate(player, item, self.storage:GetRevision(player))
     if not valid then log("preparacao recusada: " .. tostring(reason)); return false, reason end
+    local checked, empty = pcall(function()
+        for _, id in ipairs(player:GetBagOfCraftingContent()) do if id ~= 0 then return false end end
+        return true
+    end)
+    if not checked or not empty then return false, "Bolsa nativa ocupada ou indisponivel" end
+    self:StopHoldAnimation()
+    self:ClearPreview()
     local recipe = {}; for i, id in ipairs(item.recipe) do recipe[i] = id end
     self.prepared = {hash = GetPtrHash(player), item = {id = item.id, name = item.name, recipe = recipe}}
     self.started, self.armed = nil, false
+    self:SyncPreview()
+    local synced, nativeOutput = pcall(player.GetBagOfCraftingOutput, player)
+    if not synced or nativeOutput ~= item.id then
+        self:ClearPreview()
+        self.prepared = nil
+        return false, "Previa nativa indisponivel"
+    end
     log("receita preparada; jogador=" .. tostring(player:GetPlayerIndex()) .. ", hash=" .. tostring(GetPtrHash(player))
         .. ", ingredientes=" .. tostring(self.storage:Count(player)) .. ", item=" .. tostring(item.id))
-    return true, "Receita pronta: feche e segure Q"
+    return true, "Receita pronta: segure Q"
 end
 
 function Crafting:Observe(id, player)
     if self.attempt and player and GetPtrHash(player) == self.attempt.hash then
         self.attempt.observed = id
+    elseif self.prepared and player and GetPtrHash(player) == self.prepared.hash
+        and id == self.prepared.item.id and Input.IsButtonPressed(Keyboard.KEY_Q, 0) then
+        -- An outside delivery won the race. Never grant the same item again.
+        log("item selecionado entregue externamente durante Q; fabricacao propria cancelada")
+        self:Cancel(true)
     end
+end
+
+function Crafting:ShouldPreventExternalDelivery(id, player, down)
+    if not down or not player or self.attempt then return false end
+    local selection = self.prepared or self.deliveryGuard
+    return selection and GetPtrHash(player) == selection.hash and id == selection.item.id or false
 end
 
 function Crafting:FindPlayer()
@@ -47,24 +185,35 @@ function Crafting:ShouldBlock(entity, down)
 end
 
 function Crafting:Tick(open, down, now)
-    if not down then self.blockUntilRelease = false end
-    if not self.prepared then self.started = nil; return end
+    if not down then self.blockUntilRelease = false; self.deliveryGuard = nil end
+    if not self.prepared then self:StopHoldAnimation(); self.started = nil; return end
     if open or Game():IsPaused() or not self.storage.initialized then
+        self:StopHoldAnimation()
         self.started, self.armed = nil, false
         return
     end
-    if not down then self.started, self.armed = nil, true; return end
+    if not down then self:StopHoldAnimation(); self.started, self.armed = nil, true; return end
     if not self.armed then return end
-    self.started = self.started or now
+    if not self.started then
+        self.started = now
+        self:StartHoldAnimation(self:FindPlayer())
+    end
     if now - self.started < self.duration then return end
     self.blockUntilRelease = true
+    self:StopHoldAnimation()
     self.armed, self.started = false, nil
     local player, item = self:FindPlayer(), self.prepared.item
+    self.deliveryGuard = self.prepared
     log("Q concluido; jogador_encontrado=" .. tostring(player ~= nil) .. ", hash=" .. tostring(self.prepared.hash)
         .. ", item=" .. tostring(item.id) .. (player and (", jogador=" .. tostring(player:GetPlayerIndex())
         .. ", ingredientes=" .. tostring(self.storage:Count(player))) or ""))
-    self.prepared = nil
     local ok, message = self:Execute(player, item)
+    if ok or message == "Entrega incerta; consulte o log" then
+        self:ClearPreview()
+        self.prepared = nil
+    else
+        self:SyncPreview()
+    end
     self.message, self.messageUntil = message, now + 4000
     return ok, message
 end
@@ -117,9 +266,6 @@ function Crafting:Validate(player, item, expectedRevision, forDelivery)
                     .. tostring(player:GetPlayerIndex()) .. ", item=" .. tostring(item.id))
                 return nil, "Item nao cabe no inventario"
             end
-            if config.Type == ItemType.ITEM_ACTIVE and player:GetActiveItem(activeSlot) ~= 0 then
-                return nil, "Esvazie o espaco de item ativo"
-            end
         end
         return true, itemPool, activeSlot
     end)
@@ -148,11 +294,32 @@ function Crafting:Execute(player, item)
             log("save falhou antes da entrega; ingredientes restaurados em memoria")
             return false, "Falha ao salvar; nada entregue"
         end
+        local config = Isaac.GetItemConfig():GetCollectible(item.id)
+        local oldActive = config.Type == ItemType.ITEM_ACTIVE and player:GetActiveItem(slot) or 0
+        if oldActive ~= 0 and not player:CanOverrideActiveItem(slot) then
+            -- DropCollectible uses the game's pedestal handling. Never add the
+            -- replacement unless the drop succeeded and the target slot is usable.
+            local dropped, pedestal = pcall(player.DropCollectible, player, oldActive, nil, false)
+            local checked, slotAvailable = pcall(player.CanOverrideActiveItem, player, slot)
+            if not dropped or not pedestal or not checked or not slotAvailable then
+                self.storage:RollbackRecipe(transaction)
+                local restored, persisted = pcall(self.storage.Save, self.storage, "craft rollback after active drop", true)
+                if not restored or not persisted then
+                    log("falha ao salvar estorno apos tentativa de soltar item ativo")
+                    return false, "Entrega incerta; consulte o log"
+                end
+                log("troca de ativo interrompida; pedestal=" .. tostring(pedestal) .. ", erro=" .. tostring(not dropped and pedestal or nil))
+                return false, "Troca de item ativo indisponivel"
+            end
+        end
         self.attempt = {hash = GetPtrHash(player)}
         local delivered, failure = pcall(function() player:AddCollectible(item.id, 0, true, slot, 0, pool) end)
         local observed = self.attempt.observed
         self.attempt = nil
         if delivered and observed == item.id then
+            -- Visual only: QueueItem would grant the collectible a second time.
+            local animated, animationError = pcall(function() player:AnimateCollectible(item.id) end)
+            if not animated then log("animacao indisponivel: " .. tostring(animationError)) end
             log("entrega confirmada; jogador=" .. tostring(player:GetPlayerIndex()) .. ", item=" .. tostring(item.id))
             return true, "Item fabricado!"
         end

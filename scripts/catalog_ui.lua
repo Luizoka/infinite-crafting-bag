@@ -37,6 +37,26 @@ local function describe(id)
     return { name = name, quality = config.Quality, available = unlocked, gfx = config.GfxFileName }
 end
 
+-- Other mods often read physical keys directly, bypassing MC_INPUT_ACTION.
+-- Chain their Input wrappers and leave their explicit force escape hatch intact.
+local function captureSearchInput(ui)
+    local state = rawget(_G, "InfiniteCraftingBagInputCapture")
+    if not state then state = {wrappers = {}}; _G.InfiniteCraftingBagInputCapture = state end
+    state.owner = ui
+    local names = {"IsButtonPressed", "IsButtonTriggered", "IsActionPressed", "IsActionTriggered"}
+    for _, name in ipairs(names) do
+        local previous = Input[name]
+        if previous and previous ~= state.wrappers[name] then
+            local function wrapper(key, controller, force, ...)
+                if state.owner and state.owner.searchFocused and controller == 0 and not force then return false end
+                return previous(key, controller, force, ...)
+            end
+            state.wrappers[name] = wrapper
+            Input[name] = wrapper
+        end
+    end
+end
+
 function UI:Init(mod, storage)
     self.storage = storage
     self.crafting = Crafting.new(storage)
@@ -55,22 +75,45 @@ function UI:Init(mod, storage)
         Keyboard.KEY_PAGE_UP, Keyboard.KEY_PAGE_DOWN, Keyboard.KEY_BACKSPACE, Keyboard.KEY_SPACE}
     for code = string.byte("A"), string.byte("Z") do keys[#keys + 1] = code end
     for code = string.byte("0"), string.byte("9") do keys[#keys + 1] = code end
-    self.input = InputState.new(keys, {[Keyboard.KEY_UP] = true, [Keyboard.KEY_DOWN] = true})
+    local readPhysical = Input.IsButtonPressed
+    self.input = InputState.new(keys, {[Keyboard.KEY_UP] = true, [Keyboard.KEY_DOWN] = true},
+        function(key, controller) return readPhysical(key, controller, true) end)
+    captureSearchInput(self)
     mod:AddCallback(ModCallbacks.MC_POST_UPDATE, function() self:Update() end)
-    mod:AddCallback(ModCallbacks.MC_POST_RENDER, function() self:HandleInput() end)
+    mod:AddCallback(ModCallbacks.MC_POST_RENDER, function()
+        -- The post-HUD callback may be skipped if another mod cancels rendering.
+        self.crafting:EndPreviewRender()
+        self:HandleInput()
+    end)
     mod:AddCallback(ModCallbacks.MC_POST_HUD_RENDER, function() self:Render() end)
-    if ModCallbacks.MC_POST_PLAYERHUD_RENDER_CRAFTING_TABLE then
-        mod:AddCallback(ModCallbacks.MC_POST_PLAYERHUD_RENDER_CRAFTING_TABLE, function(_, player, position, scale)
-            self:RenderPreparedIcon(player, position, scale)
+    if ModCallbacks.MC_PRE_PLAYERHUD_RENDER_CRAFTING_TABLE and ModCallbacks.MC_POST_PLAYERHUD_RENDER_CRAFTING_TABLE then
+        mod:AddCallback(ModCallbacks.MC_PRE_PLAYERHUD_RENDER_CRAFTING_TABLE, function(_, player)
+            self.crafting:BeginPreviewRender(player)
         end)
-    else
-        Isaac.DebugString("[ICB DEBUG] Previa indisponivel: callback do HUD da Bag of Crafting ausente")
+        mod:AddCallback(ModCallbacks.MC_POST_PLAYERHUD_RENDER_CRAFTING_TABLE, function(_, player)
+            self.crafting:EndPreviewRender(player)
+        end)
     end
     mod:AddCallback(ModCallbacks.MC_POST_NEW_ROOM, function() self.epoch = self.epoch + 1 end)
     mod:AddCallback(ModCallbacks.MC_POST_ADD_COLLECTIBLE, function(_, id, _, _, _, _, player)
         self.epoch = self.epoch + 1
         self.crafting:Observe(id, player)
     end)
+    if ModCallbacks.MC_PRE_ADD_COLLECTIBLE then
+        mod:AddCallback(ModCallbacks.MC_PRE_ADD_COLLECTIBLE, function(_, id, _, _, _, _, player)
+            if self.crafting:ShouldPreventExternalDelivery(id, player, Input.IsButtonPressed(Keyboard.KEY_Q, 0)) then
+                Isaac.DebugString("[ICB CRAFT] entrega externa duplicada bloqueada; item=" .. tostring(id))
+                return false
+            end
+        end)
+    end
+    if ModCallbacks.MC_PRE_USE_ITEM then
+        mod:AddCallback(ModCallbacks.MC_PRE_USE_ITEM, function(_, _, _, player)
+            if self.crafting:ShouldBlock(player, Input.IsButtonPressed(Keyboard.KEY_Q, 0)) then
+                return {Discharge = false}
+            end
+        end, CollectibleType.COLLECTIBLE_BAG_OF_CRAFTING)
+    end
     mod:AddCallback(ModCallbacks.MC_POST_ACHIEVEMENT_UNLOCK, function() self.epoch = self.epoch + 1 end)
     mod:AddCallback(ModCallbacks.MC_POST_GET_COLLECTIBLE, function(_, _, _, decrease)
         if decrease and not self.calculating then self.epoch = self.epoch + 1 end
@@ -107,7 +150,8 @@ function UI:Init(mod, storage)
                 return false
             end
         end
-        if action == ButtonAction.ACTION_DROP and self.crafting:ShouldBlock(entity, Input.IsButtonPressed(Keyboard.KEY_Q, 0)) then
+        if (action == ButtonAction.ACTION_DROP or action == ButtonAction.ACTION_PILLCARD)
+            and self.crafting:ShouldBlock(entity, Input.IsButtonPressed(Keyboard.KEY_Q, 0)) then
             if hook == InputHook.GET_ACTION_VALUE then return 0 end
             return false
         end
@@ -187,7 +231,13 @@ function UI:HandleInput()
     if self.searchExitKey and not Input.IsButtonPressed(self.searchExitKey, 0) then self.searchExitKey = nil end
     local enabled = self.storage.initialized and not Game():IsPaused()
     local event = self.input:Poll(Isaac.GetTime(), enabled)
-    self.crafting:Tick(self.open, Input.IsButtonPressed(Keyboard.KEY_Q, 0), Isaac.GetTime())
+    local qDown = Input.IsButtonPressed(Keyboard.KEY_Q, 0)
+    -- Cancel before advancing the hold timer, including on its final frame.
+    if enabled and self.focus ~= "search" and event[Keyboard.KEY_BACKSPACE] then
+        self.crafting:Cancel(qDown)
+        self.message, self.messageUntil = nil, nil
+    end
+    self.crafting:Tick(self.open, qDown, Isaac.GetTime())
     if not enabled then
         if not self.storage.initialized then self:SetFocus("closed") end
         return
@@ -247,6 +297,7 @@ function UI:HandleInput()
             local valid, reason = self.crafting:Prepare(player, item)
             self.message = reason
             self.messageUntil = Isaac.GetTime() + 4000
+            if valid then self:SetFocus("closed") end
         end
     elseif self.focus == "results" and event[Keyboard.KEY_S] then
         self.searchBefore = self.query
@@ -274,24 +325,27 @@ function UI:HandleInput()
 end
 
 function UI:Update()
+    self.crafting:EndPreviewRender()
     if not self.storage.initialized then self:SetFocus("closed"); return end
+    self.crafting:SyncPreview()
     if not self.open then return end
     local player = self:GetPlayer()
     if not player then return end
     local seed = Game():GetSeeds():GetStartSeed()
     local revision = self.storage:GetRevision(player)
-    local snapshot = tostring(player:GetPlayerIndex()) .. ":" .. revision .. ":" .. tostring(seed) .. ":" .. tostring(self.epoch)
+    local cacheContext = tostring(player:GetPlayerIndex()) .. ":" .. tostring(seed) .. ":" .. tostring(self.epoch)
+    local snapshot = cacheContext .. ":" .. revision
     if snapshot ~= self.lastSnapshot then
         self.counts = self.storage:CountsByType(player)
         self.inventoryIds = {}
         for id in pairs(self.counts) do self.inventoryIds[#self.inventoryIds + 1] = id end
         table.sort(self.inventoryIds)
-        self.catalog:Refresh(self.counts, snapshot)
+        self.catalog:Refresh(self.counts, snapshot, cacheContext)
         self.lastSnapshot = snapshot
         self.inventoryOffset = 0
         self.listKey = nil
     end
-    self.catalog:Step(128, 8)
+    self.catalog:Step(128, 8, 64)
 end
 
 function UI:Draw(text, x, y, size, color)
@@ -333,86 +387,19 @@ function UI:Icon(item, x, y, scale, centerFrame)
     end
 end
 
-function UI:RenderPreparedIcon(player, position, scale)
-    local prepared = self.crafting.prepared
-    if not self.storage.initialized or not prepared or not player or not position
-        or GetPtrHash(player) ~= prepared.hash then return end
-
-    -- Cache the metadata as well as the sprite. Do not modify the native HUD sprite.
-    local id = prepared.item.id
-    if self.previewId ~= id then
-        local config = Isaac.GetItemConfig():GetCollectible(id)
-        self.previewId = id
-        self.previewItem = config and {id = id, gfx = config.GfxFileName} or nil
-    end
-    if not self.previewItem then return end
-
-    -- A recipe may become unaffordable after selection; keep this a read-only check.
-    local needed = {}
-    for _, ingredient in ipairs(prepared.item.recipe) do needed[ingredient] = (needed[ingredient] or 0) + 1 end
-    local counts = self.storage:GetTypeCounts(player)
-    for ingredient, amount in pairs(needed) do
-        if (counts[ingredient] or 0) < amount then return end
-    end
-    -- The native bag is empty because capture stores pickups virtually. Show
-    -- the selected recipe separately, above the native HUD, without changing it.
-    local width, height = 178 * scale, 54 * scale
-    local left = math.max(0, math.min(position.X - width, Isaac.GetScreenWidth() - width))
-    local top = math.max(0, position.Y - 72 * scale)
-    local bg = KColor(0.06, 0.045, 0.04, 0.88)
-    Isaac.DrawQuad(Vector(left, top), Vector(left + width, top),
-        Vector(left, top + height), Vector(left + width, top + height), bg, 1)
-    self:Icon(self.previewItem, left + 12 * scale, top + 13 * scale, scale, true)
-    self:Draw("Receita preparada", left + 25 * scale, top + 3 * scale, 0.6 * scale, KColor(1, 0.84, 0.52, 1))
-    for i, ingredient in ipairs(prepared.item.recipe) do
-        local column, row = (i - 1) % 2, math.floor((i - 1) / 2)
-        self:Draw(shortName(ingredientName(ingredient), 14),
-            left + (25 + column * 75) * scale, top + (15 + row * 9) * scale,
-            0.52 * scale)
-    end
-end
-
 function UI:Render()
     if not self.storage.initialized then return end
     local player = self:GetPlayer()
     if not player then return end
     if not self.open then
-        local c = self.crafting
-        local hasMessage = c.message and Isaac.GetTime() < c.messageUntil
-        local width, height = 150, (c.prepared or hasMessage) and 37 or 24
-        local scale = math.min(1, (Isaac.GetScreenWidth() - 12) / width)
-        local x, y = 8, Isaac.GetScreenHeight() - height * scale - 8
-        local function rect(dx, dy, w, h, color)
-            Isaac.DrawQuad(Vector(x + dx * scale, y + dy * scale), Vector(x + (dx + w) * scale, y + dy * scale),
-                Vector(x + dx * scale, y + (dy + h) * scale), Vector(x + (dx + w) * scale, y + (dy + h) * scale), color, 1)
-        end
-        local function label(text, dx, dy, size, color)
-            self:Draw(text, x + dx * scale, y + dy * scale, size * scale, color)
-        end
-        local gold, white = KColor(1, 0.84, 0.52, 1), KColor(1, 1, 1, 1)
-        rect(0, 0, width, height, KColor(0.06, 0.045, 0.04, 0.88))
-        rect(0, 0, 2, height, gold)
-        label("CRAFTING BAG", 7, 3, 0.65, gold)
-        label("[I] ABRIR", 105, 3, 0.55, white)
-        label(self.storage:Count(player) .. " ingredientes", 7, 13, 0.65, white)
-        if c.prepared then
-            label("Segure Q: " .. shortName(c.prepared.item.name, 23), 7, 24, 0.55, gold)
-            local progress = c:Progress(Isaac.GetTime())
-            if progress > 0 then
-                rect(7, 34, 136, 1, KColor(0.3, 0.24, 0.19, 1))
-                rect(7, 34, 136 * progress, 1, gold)
-            end
-        elseif hasMessage then
-            label(shortName(c.message, 32), 7, 24, 0.55, white)
-        end
+        self:Draw(self.storage:Count(player), 8, Isaac.GetScreenHeight() - 17, 0.7, KColor(1, 1, 1, 1))
         return
     end
     local w, h = Isaac.GetScreenWidth(), Isaac.GetScreenHeight()
     local s = math.min(1, (w - 12) / 410, (h - 12) / 260)
     local x, y = (w - 410 * s) / 2, (h - 260 * s) / 2
     local function draw(text, dx, dy, size, color) self:Draw(text, x + dx * s, y + dy * s, size * s, color) end
-    local bg, gold, white = KColor(0.06, 0.045, 0.04, 0.94), KColor(1, 0.84, 0.52, 1), KColor(1, 1, 1, 1)
-    Isaac.DrawQuad(Vector(x,y), Vector(x+410*s,y), Vector(x,y+260*s), Vector(x+410*s,y+260*s), bg, 1)
+    local gold, white = KColor(1, 0.84, 0.52, 1), KColor(1, 1, 1, 1)
     draw("INFINITE CRAFTING BAG", 12, 8, 1, gold)
     draw("Jogador " .. (self.playerNumber + 1) .. "  |  Ingredientes: " .. self.storage:Count(player), 12, 24, 0.8, white)
     draw("I fechar  Enter selecionar  S buscar  Tab estoque  P jogador", 12, 39, 0.65, white)
@@ -434,10 +421,11 @@ function UI:Render()
     local list = self:FilteredList()
     local av = self.availability == "all" and "Todos" or self.availability == "available" and "Desbloqueados" or "Bloqueados"
     draw("Busca: " .. self.query .. (self.editing and "_" or ""), 12, 55, 0.78, gold)
-    draw("R desbloqueio: " .. av .. "  Q: " .. (self.quality < 0 and "todas" or tostring(self.quality)), 12, 68, 0.75, white)
+    draw("R desbloqueio: " .. av .. "  Q qualidade: " .. (self.quality < 0 and "todas" or tostring(self.quality)), 12, 68, 0.75, white)
     local status = c.state == "working" and "BUSCA EM ANDAMENTO" or c.state == "limited" and "LIMITE - BUSCA INCOMPLETA"
         or c.state == "error" and "ERRO - BUSCA INCOMPLETA" or "BUSCA COMPLETA"
-    draw(status .. "  " .. (c.evaluated or 0) .. "/" .. (c.total or 0), 12, 81, 0.75, gold)
+    draw(status .. "  |  Combinacoes: " .. (c.evaluated or 0) .. "/" .. (c.total or 0)
+        .. "  |  Itens: " .. #list, 12, 81, 0.68, gold)
     local start = math.max(1, self.selected - 5)
     start = math.min(start, math.max(1, #list - 7))
     local textRight = 36
@@ -473,7 +461,7 @@ function UI:Render()
         for n, id in ipairs(ids) do
             draw(ingredientName(id) .. " x" .. used[id], 12 + ((n - 1) % 4) * 98, 225 + math.floor((n - 1) / 4) * 11, 0.62, white)
         end
-    elseif #list == 0 then draw(self.storage:Count(player) < 8 and "Ingredientes insuficientes (minimo 8)" or "Nenhum item encontrado", 12, 103, 0.8, white) end
+    elseif #list == 0 then draw(self.storage:Count(player) < 8 and "Ingredientes insuficientes (minimo 8)" or "Nenhum item com os filtros atuais", 12, 103, 0.8, white) end
     if self.message and Isaac.GetTime() < self.messageUntil then draw(self.message, 210, 8, 0.62, gold) end
 end
 

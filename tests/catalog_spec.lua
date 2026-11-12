@@ -46,6 +46,40 @@ assert(not cat:Refresh({[2]=2,[1]=8}, "seed-a"))
 assert(cat:Refresh({[1]=8,[2]=3}, "seed-a")); eq(cat.evaluated, 0); eq(next(cat.items), nil)
 assert(cat:Refresh({[1]=8,[2]=3}, "seed-b")); eq(cat.evaluated, 0)
 
+local cacheCalls = 0
+local memo = Catalog.new(function(recipe)
+    cacheCalls=cacheCalls+1
+    return recipe[8] == 1 and 1 or 2, 1
+end, function(id)
+    return {name=id == 1 and "Coração Eterno" or "LÁGRIMA azul", quality=id == 1 and 4 or 1, available=id == 1}
+end, 50000, 10)
+local function finish() while memo.state == 'working' do memo:Step(100, 8) end end
+memo:Refresh({[1]=8,[2]=1}, 'stock-1', 'run-a'); finish(); eq(cacheCalls,2)
+eq(#memo:Filter('coracao', 'available', 4),1)
+eq(#memo:Filter('lagrima', 'locked', 1),1)
+eq(#memo:Filter('lagrima', 'available', 1),0)
+eq(#memo:Filter('coracao', 'all', 1),0)
+memo:Refresh({[1]=8,[2]=2}, 'stock-2', 'run-a'); finish(); eq(cacheCalls,3)
+memo:Refresh({[1]=8}, 'stock-3', 'run-a'); finish(); eq(cacheCalls,3)
+eq(#memo:Filter('', 'all', nil),1)
+memo:Refresh({[1]=8,[2]=2}, 'stock-4', 'run-b'); finish(); eq(cacheCalls,6)
+local attempts=0
+local retry = Catalog.new(function() attempts=attempts+1; if attempts==1 then error('temporary') end; return 1 end,
+    function() return {name='test',quality=1,available=true} end)
+retry:Refresh({[1]=8}, 'one', 'same'); while retry.state=='working' do retry:Step(64,8) end
+eq(retry.state,'error')
+retry:Refresh({[1]=8}, 'two', 'same'); while retry.state=='working' do retry:Step(64,8) end
+eq(retry.state,'complete'); eq(attempts,2)
+local boundedCalls=0
+local bounded=Catalog.new(function(recipe) boundedCalls=boundedCalls+1; return recipe[8] end,
+    function(id) return {name=tostring(id),quality=0,available=true} end, 50000, 2)
+bounded:Refresh({[1]=8,[2]=2}, 'stock-a', 'run')
+while bounded.state=='working' do bounded:Step(100,8,64) end
+eq(boundedCalls,3)
+bounded:Refresh({[1]=8}, 'stock-b', 'run')
+while bounded.state=='working' do bounded:Step(100,8,64) end
+eq(boundedCalls,4) -- The oldest of three combinations was evicted.
+
 local capped = Catalog.new(function() return 100 end, function() return {name="x", quality=1, available=true} end, 2)
 local huge = {}; for i=1,29 do huge[i]=100 end
 capped:Refresh(huge, "seed")
