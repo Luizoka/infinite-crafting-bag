@@ -20,7 +20,8 @@ EntityPlayer = {CalculateBagOfCraftingOutput=function(recipe)
     local n=0; for _, ingredient in ipairs(recipe) do if ingredient==2 then n=n+1 end end
     return 123+n, 1
 end}
-local player = {ControllerIndex=0, GetPlayerIndex=function() return 0 end, ToPlayer=function(self) return self end}
+local player = {ControllerIndex=0, GetPlayerIndex=function() return 0 end, ToPlayer=function(self) return self end,
+    HasCollectible=function() return true end}
 function GetPtrHash(p) return p.identity or p end
 function Game() return {GetNumPlayers=function() return 1 end, IsPaused=function() return paused end,
     GetSeeds=function() return {GetStartSeed=function() return 42 end} end} end
@@ -53,6 +54,12 @@ end
 local function press(k)
     held[k]=true; tick(); held[k]=nil; tick()
 end
+for _=1,10 do tick() end
+assert(not ui.open and nativeCalls>0 and nativeCalls<=2 and ui.catalog.state=='working',
+    'background search starts while closed and makes at most one native calculation every five updates')
+local beforePause=nativeCalls
+paused=true; for _=1,15 do tick() end; paused=false
+assert(nativeCalls==beforePause, 'background search stops while paused')
 press(Keyboard.KEY_I)
 assert(ui.open and ui.focus=="results" and ui.availability=="available")
 while ui.catalog.state == "working" do tick() end

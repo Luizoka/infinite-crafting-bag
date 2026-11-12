@@ -328,9 +328,16 @@ function UI:Update()
     self.crafting:EndPreviewRender()
     if not self.storage.initialized then self:SetFocus("closed"); return end
     self.crafting:SyncPreview()
-    if not self.open then return end
+    if Game():IsPaused() then return end
     local player = self:GetPlayer()
     if not player then return end
+    -- Only the selected bag owner is searched. Background work is deliberately
+    -- throttled so the native calculator does not compete with gameplay.
+    if not self.open then
+        if not player:HasCollectible(CollectibleType.COLLECTIBLE_BAG_OF_CRAFTING) then return end
+        self.backgroundTick = (self.backgroundTick or 0) + 1
+        if self.backgroundTick % 5 ~= 0 then return end
+    end
     local seed = Game():GetSeeds():GetStartSeed()
     local revision = self.storage:GetRevision(player)
     local cacheContext = tostring(player:GetPlayerIndex()) .. ":" .. tostring(seed) .. ":" .. tostring(self.epoch)
@@ -345,7 +352,8 @@ function UI:Update()
         self.inventoryOffset = 0
         self.listKey = nil
     end
-    self.catalog:Step(128, 8, 64)
+    if self.open then self.catalog:Step(128, 8, 64)
+    else self.catalog:Step(16, 1, 4) end
 end
 
 function UI:Draw(text, x, y, size, color)
