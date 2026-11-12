@@ -2,6 +2,12 @@
 
 Mod for The Binding of Isaac: Repentance+ with REPENTOGON. The Bag of Crafting stores collected ingredients in a virtual per-player inventory. The catalog previews possible results and prepares a recipe for crafting by holding Q outside the catalog.
 
+## Screenshots
+
+![Crafting catalog showing the search and filters](docs/screenshots/catalog.png)
+
+![Gameplay showing the Bag of Crafting HUD](docs/screenshots/gameplay.png)
+
 ## Controls
 
 - **I** opens or closes the catalog. While editing the search, press Enter or Escape to finish editing first.
