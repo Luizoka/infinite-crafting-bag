@@ -277,6 +277,14 @@ end
 function Crafting:Execute(player, item)
     if self.busy then return false, "Fabricacao em andamento" end
     self.busy = true
+    local transaction, deliveryStarted
+    local function refund()
+        local rolledBack, restored = pcall(self.storage.RollbackRecipe, self.storage, transaction)
+        if not rolledBack or not restored then return false end
+        transaction = nil
+        local saved, persisted = pcall(self.storage.Save, self.storage, "craft rollback", true)
+        return saved and persisted == true
+    end
     local ok, success, message = pcall(function()
         if not player then return false, "Jogador indisponivel" end
         local valid, pool, slot = self:Validate(player, item, self.storage:GetRevision(player), true)
@@ -295,13 +303,14 @@ function Crafting:Execute(player, item)
                 return false, "Troca de ativos iguais indisponivel"
             end
         end
-        local transaction, err = self.storage:ConsumeRecipe(player, item.recipe)
+        local err
+        transaction, err = self.storage:ConsumeRecipe(player, item.recipe)
         if not transaction then return false, err end
         log("consumo aplicado; jogador=" .. tostring(player:GetPlayerIndex()) .. ", restantes=" .. tostring(self.storage:Count(player)))
         local saved, result = pcall(self.storage.Save, self.storage, "craft debit", true)
         if not saved or not result then
-            self.storage:RollbackRecipe(transaction)
-            log("save falhou antes da entrega; ingredientes restaurados em memoria")
+            if not refund() then return false, "Entrega incerta; consulte o log" end
+            log("save falhou antes da entrega; estorno salvo")
             return false, "Falha ao salvar; nada entregue"
         end
         local oldActive = primary
@@ -318,9 +327,7 @@ function Crafting:Execute(player, item)
             local checked, slotAvailable = pcall(player.CanOverrideActiveItem, player, slot)
             local empty = checked and slotAvailable and currentSecondary == secondary
             if not dropped or not pedestal or not readPrimary or not readSecondary or not (promoted or empty) then
-                self.storage:RollbackRecipe(transaction)
-                local restored, persisted = pcall(self.storage.Save, self.storage, "craft rollback after active drop", true)
-                if not restored or not persisted then
+                if not refund() then
                     log("falha ao salvar estorno apos tentativa de soltar item ativo")
                     return false, "Entrega incerta; consulte o log"
                 end
@@ -329,6 +336,7 @@ function Crafting:Execute(player, item)
             end
         end
         self.attempt = {hash = GetPtrHash(player)}
+        deliveryStarted = true
         local delivered, failure = pcall(function() player:AddCollectible(item.id, 0, true, slot, 0, pool) end)
         local observed = self.attempt.observed
         self.attempt = nil
@@ -353,7 +361,12 @@ function Crafting:Execute(player, item)
         return false, "Entrega incerta; consulte o log"
     end)
     self.attempt, self.busy = nil, false
-    if not ok then log("erro inesperado: " .. tostring(success)); return false, "Erro; consulte o log" end
+    if not ok then
+        log("erro inesperado: " .. tostring(success))
+        if transaction and not deliveryStarted and refund() then return false, "Erro; ingredientes restaurados" end
+        if transaction then return false, "Entrega incerta; consulte o log" end
+        return false, "Erro; consulte o log"
+    end
     if not success then log(message) end
     return success, message
 end

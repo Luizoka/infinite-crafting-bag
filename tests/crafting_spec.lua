@@ -182,4 +182,21 @@ storage:Add(other,recipe); other.active=60; other.secondary=60; other.dropped=ni
 local swapped, swapReason=crafting:Execute(other,second)
 assert(not swapped and swapReason=='Troca de ativos iguais indisponivel' and not other.dropped)
 assert(other.active==60 and other.secondary==60 and storage:Count(other)==8 and #other.given==4)
+other.schoolbag=false; other.active=61; other.secondary=0
+local originalSave, originalOverride = storage.Save, other.CanOverrideActiveItem
+storage.Save=function(self, reason, allowEmpty)
+    local result=originalSave(self, reason, allowEmpty)
+    if reason=='craft debit' then other.CanOverrideActiveItem=function() error('API failure after debit') end end
+    return result
+end
+local succeeded, failure=crafting:Execute(other,second)
+storage.Save, other.CanOverrideActiveItem = originalSave, originalOverride
+assert(not succeeded and failure=='Erro; ingredientes restaurados' and storage:Count(other)==8 and #other.given==4)
+storage:OnGameStarted(true); assert(storage:Count(other)==8, 'unexpected failure refund survives Continue')
+local originalAdd=other.AddCollectible
+other.active=0; other.AddCollectible=function() error('uncertain delivery') end
+succeeded, failure=crafting:Execute(other,second)
+other.AddCollectible=originalAdd
+assert(not succeeded and failure=='Entrega incerta; consulte o log' and storage:Count(other)==0)
+storage:OnGameStarted(true); assert(storage:Count(other)==0, 'uncertain delivery must not be refunded')
 print('PASS crafting: hold, cancel, release, stale recipe, save failure and multiplayer')
