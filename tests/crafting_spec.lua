@@ -24,9 +24,9 @@ Isaac={DebugString=function() end, GetPlayer=function(i) return wrapper(players[
     GetItemConfig=function() return {GetCollectible=function() return config end} end}
 function Game() return {GetNumPlayers=function() return #players end, GetFrameCount=function() return 0 end,
     GetSeeds=function() return {GetStartSeed=function() return 42 end} end, IsPaused=function() return false end} end
-ItemType={ITEM_ACTIVE=2}; ActiveSlot={SLOT_PRIMARY=0}
+ItemType={ITEM_ACTIVE=2}; ActiveSlot={SLOT_PRIMARY=0, SLOT_SECONDARY=1}
 PlayerType={PLAYER_ISAAC_B=21, PLAYER_CAIN_B=23}
-CollectibleType={COLLECTIBLE_BAG_OF_CRAFTING=1}
+CollectibleType={COLLECTIBLE_BAG_OF_CRAFTING=1, COLLECTIBLE_SCHOOLBAG=2}
 local output=101
 EntityPlayer={CalculateBagOfCraftingOutput=function() return output, 1 end}
 local storage=include('scripts/storage'); storage:Init(mod); storage:OnGameStarted(false)
@@ -36,16 +36,19 @@ local function player(index)
     function p:GetPlayerIndex() return self.index end
     function p:Exists() return true end
     function p:IsDead() return false end
-    function p:HasCollectible() return true end
+    function p:HasCollectible(id) return id == CollectibleType.COLLECTIBLE_BAG_OF_CRAFTING or self.schoolbag == true end
     function p:GetPlayerType() return self.playerType or PlayerType.PLAYER_CAIN_B end
     function p:CanAddCollectibleToInventory() return false end
-    function p:GetActiveItem() return self.active or 0 end
+    function p:GetActiveItem(slot) if slot == ActiveSlot.SLOT_SECONDARY then return self.secondary or 0 end; return self.active or 0 end
     function p:CanOverrideActiveItem() return (self.identity or self).active == nil or (self.identity or self).active == 0 end
     function p:DropCollectible(id)
         local owner = self.identity or self
         if owner.dropFails then return nil end
         assert(owner.active==id)
-        owner.active=0; owner.dropped={id=id, charge=owner.charge}; return owner.dropped
+        owner.dropped={id=id, charge=owner.charge}
+        owner.active, owner.charge = owner.secondary or 0, owner.secondaryCharge or 0
+        owner.secondary, owner.secondaryCharge = 0, 0
+        return owner.dropped
     end
     function p:GetBagOfCraftingContent() return self.bag or {} end
     function p:GetBagOfCraftingOutput() return (self.identity or self).nativeOutput or 0 end
@@ -55,7 +58,15 @@ local function player(index)
         owner.bag=content; owner.nativeOutput=0; owner.writes=(owner.writes or 0)+1
     end
     function p:ToPlayer() return self end
-    function p:AddCollectible(id) self.given[#self.given+1]=id; crafting:Observe(id,wrapper(self.identity or self)) end
+    function p:AddCollectible(id)
+        if config.Type == ItemType.ITEM_ACTIVE then
+            if self.schoolbag and (self.secondary or 0) == 0 and (self.active or 0) ~= 0 then
+                self.secondary, self.secondaryCharge = self.active, self.charge
+            end
+            self.active, self.charge = id, 0
+        end
+        self.given[#self.given+1]=id; crafting:Observe(id,wrapper(self.identity or self))
+    end
     function p:AnimateCollectible(id, animation)
         local owner = self.identity or self
         owner.animated, owner.animation = id, animation
@@ -153,4 +164,22 @@ assert(crafting:Prepare(other,second))
 crafting:Tick(false,false,26000); crafting:Tick(false,true,26001); crafting:Tick(false,true,27201)
 assert(other.active==56 and #other.given==1 and storage:Count(other)==8, 'failed drop refunds ingredients and does not deliver')
 storage:OnGameStarted(true); assert(storage:Count(other)==8, 'failed drop refund must be persisted')
+other.dropFails=false; other.schoolbag=true; other.active=57; other.charge=5; other.secondary=0; other.dropped=nil
+assert(crafting:Execute(other,second))
+assert(other.active==102 and other.secondary==57 and other.secondaryCharge==5 and not other.dropped)
+assert(storage:Count(other)==0 and #other.given==2, 'free schoolbag slot delivers once')
+storage:Add(other,recipe); other.active=58; other.charge=4; other.secondary=59; other.secondaryCharge=6
+other.dropped=nil
+assert(crafting:Execute(other,second))
+assert(other.active==102 and other.secondary==59 and other.secondaryCharge==6)
+assert(other.dropped.id==58 and other.dropped.charge==4)
+assert(storage:Count(other)==0 and #other.given==3, 'full schoolbag drops the selected active and delivers once')
+storage:Add(other,recipe); other.active=59; other.charge=6; other.secondary=102; other.secondaryCharge=2
+assert(crafting:Execute(other,second))
+assert(other.dropped.id==59 and other.dropped.charge==6 and other.active==102 and other.secondary==102 and other.secondaryCharge==2)
+assert(storage:Count(other)==0 and #other.given==4, 'swapping selection drops the newly selected active')
+storage:Add(other,recipe); other.active=60; other.secondary=60; other.dropped=nil
+local swapped, swapReason=crafting:Execute(other,second)
+assert(not swapped and swapReason=='Troca de ativos iguais indisponivel' and not other.dropped)
+assert(other.active==60 and other.secondary==60 and storage:Count(other)==8 and #other.given==4)
 print('PASS crafting: hold, cancel, release, stale recipe, save failure and multiplayer')

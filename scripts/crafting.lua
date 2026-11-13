@@ -285,6 +285,16 @@ function Crafting:Execute(player, item)
         for _, id in ipairs(player:GetBagOfCraftingContent()) do
             if id ~= 0 then return false, "Bolsa nativa ocupada" end
         end
+        local config = Isaac.GetItemConfig():GetCollectible(item.id)
+        local primary, secondary, schoolbag = 0, 0, false
+        if config.Type == ItemType.ITEM_ACTIVE then
+            primary = player:GetActiveItem(ActiveSlot.SLOT_PRIMARY)
+            secondary = player:GetActiveItem(ActiveSlot.SLOT_SECONDARY)
+            schoolbag = player:HasCollectible(CollectibleType.COLLECTIBLE_SCHOOLBAG)
+            if primary ~= 0 and primary == secondary and not player:CanOverrideActiveItem(slot) then
+                return false, "Troca de ativos iguais indisponivel"
+            end
+        end
         local transaction, err = self.storage:ConsumeRecipe(player, item.recipe)
         if not transaction then return false, err end
         log("consumo aplicado; jogador=" .. tostring(player:GetPlayerIndex()) .. ", restantes=" .. tostring(self.storage:Count(player)))
@@ -294,14 +304,20 @@ function Crafting:Execute(player, item)
             log("save falhou antes da entrega; ingredientes restaurados em memoria")
             return false, "Falha ao salvar; nada entregue"
         end
-        local config = Isaac.GetItemConfig():GetCollectible(item.id)
-        local oldActive = config.Type == ItemType.ITEM_ACTIVE and player:GetActiveItem(slot) or 0
-        if oldActive ~= 0 and not player:CanOverrideActiveItem(slot) then
+        local oldActive = primary
+        local hasFreeSchoolbagSlot = schoolbag and secondary == 0
+        if oldActive ~= 0 and not player:CanOverrideActiveItem(slot) and not hasFreeSchoolbagSlot then
             -- DropCollectible uses the game's pedestal handling. Never add the
             -- replacement unless the drop succeeded and the target slot is usable.
             local dropped, pedestal = pcall(player.DropCollectible, player, oldActive, nil, false)
+            local readPrimary, currentPrimary = pcall(player.GetActiveItem, player, ActiveSlot.SLOT_PRIMARY)
+            local readSecondary, currentSecondary = pcall(player.GetActiveItem, player, ActiveSlot.SLOT_SECONDARY)
+            -- Removing the selected item may promote the Schoolbag item to
+            -- primary; AddCollectible will move it back to secondary.
+            local promoted = schoolbag and secondary ~= 0 and currentPrimary == secondary and currentSecondary == 0
             local checked, slotAvailable = pcall(player.CanOverrideActiveItem, player, slot)
-            if not dropped or not pedestal or not checked or not slotAvailable then
+            local empty = checked and slotAvailable and currentSecondary == secondary
+            if not dropped or not pedestal or not readPrimary or not readSecondary or not (promoted or empty) then
                 self.storage:RollbackRecipe(transaction)
                 local restored, persisted = pcall(self.storage.Save, self.storage, "craft rollback after active drop", true)
                 if not restored or not persisted then
@@ -317,6 +333,16 @@ function Crafting:Execute(player, item)
         local observed = self.attempt.observed
         self.attempt = nil
         if delivered and observed == item.id then
+            if schoolbag and primary ~= 0 and secondary ~= 0 and oldActive ~= 0 then
+                local checked, newPrimary, newSecondary = pcall(function()
+                    return player:GetActiveItem(ActiveSlot.SLOT_PRIMARY), player:GetActiveItem(ActiveSlot.SLOT_SECONDARY)
+                end)
+                if not checked or newPrimary ~= item.id or newSecondary ~= secondary then
+                    log("entrega de ativo divergente; esperado=" .. tostring(item.id) .. "/" .. tostring(secondary)
+                        .. ", atual=" .. tostring(newPrimary) .. "/" .. tostring(newSecondary))
+                    return false, "Entrega incerta; consulte o log"
+                end
+            end
             -- Visual only: QueueItem would grant the collectible a second time.
             local animated, animationError = pcall(function() player:AnimateCollectible(item.id) end)
             if not animated then log("animacao indisponivel: " .. tostring(animationError)) end
