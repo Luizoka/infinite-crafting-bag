@@ -18,8 +18,21 @@ function Crafting:Reset()
     self.deliveryGuard = nil
 end
 
--- The preview is rendered by the mod and never changes the native bag.
-function Crafting:ClearPreview() end
+function Crafting:ClearPreview()
+    local player = self:FindPlayer()
+    if player and self.prepared then
+        local ok, err = pcall(function()
+            local empty = true
+            for _, id in ipairs(player:GetBagOfCraftingContent()) do if id ~= 0 then empty = false; break end end
+            if empty and player:GetBagOfCraftingOutput() == self.prepared.item.id then
+                -- Recalculating an empty bag clears both output and item pool,
+                -- and invalidates the native HUD's cached crafting item.
+                player:SetBagOfCraftingContent({})
+            end
+        end)
+        if not ok then log("falha ao limpar previa: " .. tostring(err)) end
+    end
+end
 
 function Crafting:Cancel(down)
     if not self.prepared then return end
@@ -52,7 +65,42 @@ function Crafting:StopHoldAnimation()
     if not ok then log("falha ao encerrar animacao da bolsa: " .. tostring(err)) end
 end
 
-function Crafting:EndPreviewRender() end
+-- The native HUD reads the eight bag slots directly. Mirror the recipe only
+-- around its render callback; gameplay and pickup capture keep an empty bag.
+function Crafting:BeginPreviewRender(player)
+    local prepared = self.prepared
+    if self.renderMirror or not self.storage.initialized or not prepared or not player
+        or GetPtrHash(player) ~= prepared.hash then return end
+    local ok, err = pcall(function()
+        for _, id in ipairs(player:GetBagOfCraftingContent()) do if id ~= 0 then return end end
+        local recipe = {}
+        for i, id in ipairs(prepared.item.recipe) do recipe[i] = id end
+        self.renderMirror = {player = player, hash = prepared.hash, recipe = recipe, id = prepared.item.id}
+        player:SetBagOfCraftingContent(recipe)
+        if player:GetBagOfCraftingOutput() ~= prepared.item.id then
+            player:SetBagOfCraftingOutput(prepared.item.id)
+        end
+    end)
+    if not ok then
+        log("falha ao preparar renderizacao: " .. tostring(err))
+        self:EndPreviewRender()
+    end
+end
+
+function Crafting:EndPreviewRender(player)
+    local mirror = self.renderMirror
+    if not mirror or (player and GetPtrHash(player) ~= mirror.hash) then return end
+    self.renderMirror = nil
+    local ok, err = pcall(function()
+        local current = mirror.player:GetBagOfCraftingContent()
+        for i = 1, 8 do if current[i] ~= mirror.recipe[i] then return end end
+        mirror.player:SetBagOfCraftingContent({})
+        if self.prepared and self.prepared.hash == mirror.hash and self.prepared.item.id == mirror.id then
+            mirror.player:SetBagOfCraftingOutput(mirror.id)
+        end
+    end)
+    if not ok then log("falha ao restaurar bolsa apos renderizacao: " .. tostring(err)) end
+end
 
 function Crafting:SyncPreview()
     if not self.prepared then return end
@@ -70,6 +118,11 @@ function Crafting:SyncPreview()
                 return
             end
         end
+        -- A populated native bag belongs to the game or another mod.
+        for _, id in ipairs(player:GetBagOfCraftingContent()) do if id ~= 0 then return end end
+        if player:GetBagOfCraftingOutput() ~= self.prepared.item.id then
+            player:SetBagOfCraftingOutput(self.prepared.item.id)
+        end
     end)
     if not ok then log("falha ao sincronizar previa: " .. tostring(err)) end
 end
@@ -85,9 +138,15 @@ function Crafting:Prepare(player, item)
     self:StopHoldAnimation()
     self:ClearPreview()
     local recipe = {}; for i, id in ipairs(item.recipe) do recipe[i] = id end
-    self.prepared = {hash = GetPtrHash(player), item = {id = item.id, name = item.name, gfx = item.gfx, recipe = recipe}}
+    self.prepared = {hash = GetPtrHash(player), item = {id = item.id, name = item.name, recipe = recipe}}
     self.started, self.armed = nil, false
     self:SyncPreview()
+    local synced, nativeOutput = pcall(player.GetBagOfCraftingOutput, player)
+    if not synced or nativeOutput ~= item.id then
+        self:ClearPreview()
+        self.prepared = nil
+        return false, "Previa nativa indisponivel"
+    end
     log("receita preparada; jogador=" .. tostring(player:GetPlayerIndex()) .. ", hash=" .. tostring(GetPtrHash(player))
         .. ", ingredientes=" .. tostring(self.storage:Count(player)) .. ", item=" .. tostring(item.id))
     return true, "Receita pronta: segure Q"
