@@ -62,6 +62,8 @@ function Storage:Init(mod)
 	self.initialized = false
 	self.isContinued = nil
 	self.runSeed = nil
+	self.pendingCraft = nil
+	self.craftNotice = nil
 	log("Storage:Init; memória zerada para inicialização, persistência não alterada")
 	log("JSON importado; encode=" .. type(json.encode) .. ", decode=" .. type(json.decode))
 end
@@ -192,6 +194,20 @@ function Storage:InspectSavedData(source)
 		log(source .. "; payload inválido ou sem seed válida; dados preservados")
 		return nil, "invalid-structure"
 	end
+	local pending = data.pendingCraft
+	if pending ~= nil then
+		if type(pending) ~= "table" or (pending.phase ~= "debited" and pending.phase ~= "delivering")
+			or type(pending.player) ~= "string" or not pending.player:match("^%d+$")
+			or type(pending.item) ~= "number" or pending.item <= 0 or pending.item % 1 ~= 0
+			or type(pending.recipe) ~= "table" or #pending.recipe ~= 8 then return nil, "invalid-structure" end
+		local n = 0
+		for key, id in pairs(pending.recipe) do
+			n = n + 1
+			if type(key) ~= "number" or key % 1 ~= 0 or key < 1 or key > 8
+				or type(id) ~= "number" or id <= 0 or id % 1 ~= 0 then return nil, "invalid-structure" end
+		end
+		if n ~= 8 then return nil, "invalid-structure" end
+	end
 	return data, "ok"
 end
 
@@ -205,6 +221,7 @@ function Storage:OnGameStarted(isContinued)
 		.. ", HasData=" .. tostring(self.mod:HasData()))
 	self.isContinued = isContinued
 	self.runSeed = seed
+	self.pendingCraft, self.craftNotice = nil, nil
 
 	if isContinued then
 		local data, status = self:InspectSavedData("MC_POST_GAME_STARTED Continue")
@@ -216,6 +233,7 @@ function Storage:OnGameStarted(isContinued)
 				self.preserveSavedData = true
 			else
 				self.players = data.players
+				self.pendingCraft = data.pendingCraft
 				self.preserveSavedData = false
 				log("Continue restaurado; jogadores=" .. summarize(self.players))
 			end
@@ -234,6 +252,21 @@ function Storage:OnGameStarted(isContinued)
 	end
 
 	self.initialized = true
+	if self.pendingCraft and self.pendingCraft.phase == "debited" then
+		local pending = self.pendingCraft
+		local data = self.players[pending.player] or {ingredients = {}}
+		self.players[pending.player] = data
+		for _, id in ipairs(pending.recipe) do data.ingredients[#data.ingredients + 1] = id end
+		self.pendingCraft = nil
+		self.craftNotice = "Fabricacao interrompida: ingredientes restaurados"
+		if not self:Save("recover interrupted craft", true) then
+			self.craftNotice = "Estorno em memoria; falha ao salvar"
+		end
+	elseif self.pendingCraft then
+		self.craftNotice = "Fabricacao interrompida: entrega incerta; veja o log"
+		log("Fabricacao interrompida durante entrega; jogador=" .. self.pendingCraft.player
+			.. ", item=" .. tostring(self.pendingCraft.item) .. "; sem reentrega ou estorno automatico")
+	end
 	log("Estado pronto; continued=" .. tostring(isContinued) .. ", jogadores=" .. summarize(self.players))
 end
 
@@ -270,6 +303,7 @@ function Storage:Save(reason, allowEmpty)
 	local payload = {
 		version = self.VERSION,
 		players = self.players,
+		pendingCraft = self.pendingCraft,
 		runSeed = self.runSeed,
 		-- A marker in the same envelope verifies JSON serialization and SaveData/LoadData
 		-- across Continue without introducing another save file or replacing inventory.

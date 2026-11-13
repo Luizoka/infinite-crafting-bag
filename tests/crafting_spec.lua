@@ -194,4 +194,27 @@ succeeded, failure=crafting:Execute(other,second)
 other.AddCollectible=originalAdd
 assert(not succeeded and failure=='Entrega incerta; consulte o log' and storage:Count(other)==0)
 storage:OnGameStarted(true); assert(storage:Count(other)==0, 'uncertain delivery must not be refunded')
+assert(storage.pendingCraft and storage.pendingCraft.phase=='delivering' and storage.craftNotice, 'uncertain delivery is reported after Continue')
+assert(#other.given==4, 'Continue must never deliver an uncertain item again')
+storage:Add(other,recipe)
+local interrupted=assert(storage:ConsumeRecipe(other,recipe))
+storage.pendingCraft={phase='debited',player=interrupted.key,item=second.id,recipe=recipe}
+assert(storage:Save('simulate interruption before delivery',true))
+storage:OnGameStarted(true)
+assert(storage:Count(other)==8 and not storage.pendingCraft and storage.craftNotice:find('restaurados'), 'Continue refunds an interrupted debit')
+storage:OnGameStarted(true)
+assert(storage:Count(other)==8 and not storage.pendingCraft, 'refund is saved once')
+other.active=0; other.AddCollectible=function(self,id) self.given[#self.given+1]=id; crafting:Observe(id+1,self) end
+succeeded, failure=crafting:Execute(other,second)
+other.AddCollectible=originalAdd
+assert(not succeeded and failure=='Entrega incerta; consulte o log' and storage:Count(other)==0)
+storage:OnGameStarted(true)
+assert(storage.pendingCraft.phase=='delivering' and storage:Count(other)==0 and #other.given==5, 'modified delivery stays uncertain without refund or redelivery')
+storage:Add(other,recipe)
+other.AddCollectible=function() end
+succeeded, failure=crafting:Execute(other,second)
+other.AddCollectible=originalAdd
+assert(not succeeded and failure=='Entrega incerta; consulte o log' and storage:Count(other)==0)
+storage:OnGameStarted(true)
+assert(storage.pendingCraft.phase=='delivering' and #other.given==5, 'cancelled callback remains uncertain after Continue')
 print('PASS crafting: hold, cancel, release, stale recipe, save failure and multiplayer')

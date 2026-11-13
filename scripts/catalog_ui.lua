@@ -390,6 +390,9 @@ function UI:Render()
     if not player then return end
     if not self.open then
         self:Draw(self.storage:Count(player), 8, Isaac.GetScreenHeight() - 17, 0.7, KColor(1, 1, 1, 1))
+        if self.storage.craftNotice then
+            self:Draw(self.storage.craftNotice, 8, Isaac.GetScreenHeight() - 58, 0.65, KColor(1, 0.84, 0.52, 1))
+        end
         local prepared = self.crafting.prepared
         if prepared then
             local selected = prepared.item

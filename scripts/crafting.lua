@@ -223,6 +223,7 @@ function Crafting:Execute(player, item)
         local rolledBack, restored = pcall(self.storage.RollbackRecipe, self.storage, transaction)
         if not rolledBack or not restored then return false end
         transaction = nil
+        self.storage.pendingCraft = nil
         local saved, persisted = pcall(self.storage.Save, self.storage, "craft rollback", true)
         return saved and persisted == true
     end
@@ -247,6 +248,8 @@ function Crafting:Execute(player, item)
         local err
         transaction, err = self.storage:ConsumeRecipe(player, item.recipe)
         if not transaction then return false, err end
+        local recipe = {}; for i, id in ipairs(item.recipe) do recipe[i] = id end
+        self.storage.pendingCraft = {phase = "debited", player = transaction.key, item = item.id, recipe = recipe}
         log("consumo aplicado; jogador=" .. tostring(player:GetPlayerIndex()) .. ", restantes=" .. tostring(self.storage:Count(player)))
         local saved, result = pcall(self.storage.Save, self.storage, "craft debit", true)
         if not saved or not result then
@@ -276,6 +279,12 @@ function Crafting:Execute(player, item)
                 return false, "Troca de item ativo indisponivel"
             end
         end
+        self.storage.pendingCraft.phase = "delivering"
+        local marked, markedSaved = pcall(self.storage.Save, self.storage, "craft delivery started", true)
+        if not marked or not markedSaved then
+            if refund() then return false, "Falha ao salvar; nada entregue" end
+            return false, "Entrega incerta; consulte o log"
+        end
         self.attempt = {hash = GetPtrHash(player)}
         deliveryStarted = true
         local delivered, failure = pcall(function() player:AddCollectible(item.id, 0, true, slot, 0, pool) end)
@@ -295,6 +304,12 @@ function Crafting:Execute(player, item)
             -- Visual only: QueueItem would grant the collectible a second time.
             local animated, animationError = pcall(function() player:AnimateCollectible(item.id) end)
             if not animated then log("animacao indisponivel: " .. tostring(animationError)) end
+            self.storage.pendingCraft = nil
+            local settled, persisted = pcall(self.storage.Save, self.storage, "craft delivered", true)
+            if not settled or not persisted then
+                self.storage.craftNotice = "Item entregue; falha ao salvar confirmacao"
+                log("falha ao salvar confirmacao da entrega; nenhuma reentrega sera feita")
+            end
             log("entrega confirmada; jogador=" .. tostring(player:GetPlayerIndex()) .. ", item=" .. tostring(item.id))
             return true, "Item fabricado!"
         end
