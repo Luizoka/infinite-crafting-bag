@@ -4,9 +4,29 @@ Mod for The Binding of Isaac: Repentance+ with REPENTOGON. The Bag of Crafting s
 
 ## Screenshots
 
-![Crafting catalog showing the search and filters](docs/screenshots/catalog.png)
+**Recipe catalog**
 
-![Gameplay showing the Bag of Crafting HUD](docs/screenshots/gameplay.png)
+![Catalog listing available items and their recipes](docs/screenshots/interface.png)
+
+**Browsing recipes**
+
+![Browsing items and viewing their ingredients](docs/screenshots/searching.png)
+
+**Ingredient inventory**
+
+![Inventory of collected crafting ingredients](docs/screenshots/inventory.png)
+
+**Selected recipe**
+
+![Selected item and its ingredients in the native crafting HUD](docs/screenshots/selected-item.png)
+
+**Crafting**
+
+![Crafting the selected item with the Bag of Crafting](docs/screenshots/crafting-item.png)
+
+**Crafted item**
+
+![Crafted item acquired and previous active item on a pedestal](docs/screenshots/crafted-item.png)
 
 ## Controls
 
