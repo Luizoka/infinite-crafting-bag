@@ -205,17 +205,8 @@ assert(ui.crafting.prepared and ui.crafting.prepared.hash==GetPtrHash(player))
 local prepared = ui.crafting.prepared
 assert(not ui.open)
 assert(ui.crafting.prepared == prepared, "closing catalog must retain the prepared recipe")
-texts={}; ui:Render(); assert(#texts==1 and texts[1].text=='16', 'closed HUD shows only the pickup total')
-local beginRender, endRender = 0, 0
-local originalBegin, originalEnd = ui.crafting.BeginPreviewRender, ui.crafting.EndPreviewRender
-ui.crafting.BeginPreviewRender=function(_, p) assert(p==player); beginRender=beginRender+1 end
-ui.crafting.EndPreviewRender=function(_, p) if p then assert(p==player) end; endRender=endRender+1 end
-callbacks[ModCallbacks.MC_PRE_PLAYERHUD_RENDER_CRAFTING_TABLE](nil,player)
-callbacks[ModCallbacks.MC_POST_PLAYERHUD_RENDER_CRAFTING_TABLE](nil,player)
-assert(beginRender==1 and endRender==1, 'native HUD callbacks surround the mirror')
-callbacks[ModCallbacks.MC_POST_RENDER]()
-assert(endRender==2, 'post-render cleans up when the HUD callback is skipped')
-ui.crafting.BeginPreviewRender, ui.crafting.EndPreviewRender = originalBegin, originalEnd
+texts={}; ui:Render(); assert(#texts==2 and texts[1].text=='16' and texts[2].text:find('Q: ', 1, true), 'closed HUD shows stock and prepared item')
+assert(not callbacks[ModCallbacks.MC_PRE_PLAYERHUD_RENDER_CRAFTING_TABLE] and not callbacks[ModCallbacks.MC_POST_PLAYERHUD_RENDER_CRAFTING_TABLE], 'preview never writes during native HUD callbacks')
 ui.crafting.prepared=nil
 assert(callbacks[ModCallbacks.MC_INPUT_ACTION](nil,player,0,0) == nil)
 local cancels=0

@@ -81,19 +81,9 @@ function UI:Init(mod, storage)
     captureSearchInput(self)
     mod:AddCallback(ModCallbacks.MC_POST_UPDATE, function() self:Update() end)
     mod:AddCallback(ModCallbacks.MC_POST_RENDER, function()
-        -- The post-HUD callback may be skipped if another mod cancels rendering.
-        self.crafting:EndPreviewRender()
         self:HandleInput()
     end)
     mod:AddCallback(ModCallbacks.MC_POST_HUD_RENDER, function() self:Render() end)
-    if ModCallbacks.MC_PRE_PLAYERHUD_RENDER_CRAFTING_TABLE and ModCallbacks.MC_POST_PLAYERHUD_RENDER_CRAFTING_TABLE then
-        mod:AddCallback(ModCallbacks.MC_PRE_PLAYERHUD_RENDER_CRAFTING_TABLE, function(_, player)
-            self.crafting:BeginPreviewRender(player)
-        end)
-        mod:AddCallback(ModCallbacks.MC_POST_PLAYERHUD_RENDER_CRAFTING_TABLE, function(_, player)
-            self.crafting:EndPreviewRender(player)
-        end)
-    end
     mod:AddCallback(ModCallbacks.MC_POST_NEW_ROOM, function() self.epoch = self.epoch + 1 end)
     mod:AddCallback(ModCallbacks.MC_POST_ADD_COLLECTIBLE, function(_, id, _, _, _, _, player)
         self.epoch = self.epoch + 1
@@ -325,7 +315,6 @@ function UI:HandleInput()
 end
 
 function UI:Update()
-    self.crafting:EndPreviewRender()
     if not self.storage.initialized then self:SetFocus("closed"); return end
     self.crafting:SyncPreview()
     if Game():IsPaused() then return end
@@ -401,6 +390,12 @@ function UI:Render()
     if not player then return end
     if not self.open then
         self:Draw(self.storage:Count(player), 8, Isaac.GetScreenHeight() - 17, 0.7, KColor(1, 1, 1, 1))
+        local prepared = self.crafting.prepared
+        if prepared then
+            local selected = prepared.item
+            self:Icon(selected, 16, Isaac.GetScreenHeight() - 40, 0.8, true)
+            self:Draw("Q: " .. shortName(selected.name or ("Item " .. selected.id), 32), 29, Isaac.GetScreenHeight() - 44, 0.7, KColor(1, 0.84, 0.52, 1))
+        end
         return
     end
     local w, h = Isaac.GetScreenWidth(), Isaac.GetScreenHeight()
